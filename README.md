@@ -94,16 +94,47 @@ While **HY-World 1.0** is capable of generating immersive 3D worlds, it relies o
 
 
 ## 🛠️ Dependencies and Installation
+
+### 1. Create Environment
 ```bash
 conda create --name worldplay python=3.10 -y
 conda activate worldplay
 pip install -r requirements.txt
 ```
 
-- Flash Attention: Install Flash Attention for faster inference and reduced GPU memory consumption. Detailed installation instructions are available at [Flash Attention](https://github.com/Dao-AILab/flash-attention).
+### 2. Install Flash Attention (Optional but Recommended)
+Install Flash Attention for faster inference and reduced GPU memory consumption:
+```bash
+pip install flash-attn --no-build-isolation
+```
+Detailed instructions: [Flash Attention](https://github.com/Dao-AILab/flash-attention)
 
-- HunyuanVideo-1.5 Base Model: Download the pretrained HunyuanVideo-1.5 model following the instructions at [HunyuanVideo-1.5 Download](https://huggingface.co/tencent/HunyuanVideo-1.5#-download-pretrained-models). This base model is required before using the HY-World 1.5 checkpoints. Specifically, we use the [480P-I2V model](https://huggingface.co/tencent/HunyuanVideo-1.5/tree/main/transformer/480p_i2v).
+### 3. Download All Required Models
 
+We provide a download script that automatically downloads all required models:
+
+```bash
+python download_models.py --hf_token <your_huggingface_token>
+```
+
+**Important:** The vision encoder requires access to a gated model. Before running:
+1. Request access at: https://huggingface.co/black-forest-labs/FLUX.1-Redux-dev
+2. Wait for approval (usually instant)
+3. Create/get your access token at: https://huggingface.co/settings/tokens (select "Read" permission)
+
+If you don't have FLUX access yet, you can skip the vision encoder:
+```bash
+python download_models.py --skip_vision_encoder
+```
+
+The script downloads:
+- **HY-WorldPlay** action models (~32GB each)
+- **HunyuanVideo-1.5** base model (vae, scheduler, 480p transformer)
+- **Qwen2.5-VL-7B-Instruct** text encoder (~15GB)
+- **ByT5** encoders (byt5-small + Glyph-SDXL-v2)
+- **SigLIP** vision encoder (from FLUX.1-Redux-dev)
+
+After download completes, the script will print the model paths to add to `run.sh`.
 
 ## 🎮 Quick Start
 
@@ -114,104 +145,83 @@ https://github.com/user-attachments/assets/643a33a4-b677-4eff-ad1d-32205c594274
 
 Try our **online demo** without installation: https://3d.hunyuan.tencent.com/sceneTo3D
 
-## 🧱 Download Pretrained Models
-We provide the implementaion using the HunyuanVideo-1.5, which is one of most powerful open-source video diffusion models. The model checkpoints can be found [here](https://huggingface.co/tencent/HY-WorldPlay).
+## 🧱 Model Checkpoints
 
-You can download all three models using the `huggingface-cli` command:
-```bash
-hf download tencent/HY-WorldPlay
-```
-
-|ModelName| Download                     |
-|-|-------------------------------------------|
-HY-World1.5-Bidirectional-480P-I2V |   [Link](https://huggingface.co/tencent/HY-WorldPlay/tree/main/bidirectional_model)  |
-HY-World1.5-Autoregressive-480P-I2V | [Link](https://huggingface.co/tencent/HY-WorldPlay/tree/main/ar_model)   |
-HY-World1.5-Autoregressive-480P-I2V-distill |  [Link](https://huggingface.co/tencent/HY-WorldPlay/tree/main/ar_distilled_action_model)   |   
+| Model | Description | Download |
+|-------|-------------|----------|
+| HY-World1.5-Bidirectional-480P-I2V | Best quality, slower | [Link](https://huggingface.co/tencent/HY-WorldPlay/tree/main/bidirectional_model) |
+| HY-World1.5-Autoregressive-480P-I2V | Balanced speed/quality | [Link](https://huggingface.co/tencent/HY-WorldPlay/tree/main/ar_model) |
+| HY-World1.5-Autoregressive-480P-I2V-distill | Fastest (4-step), real-time | [Link](https://huggingface.co/tencent/HY-WorldPlay/tree/main/ar_distilled_action_model) |   
 
 ## 🔑 Inference
-We open source the inference code for both bidirectional and autoregressive diffusion models. For prompt rewriting, we recommend using Gemini or models deployed via vLLM. This codebase currently only supports models compatible with the vLLM API. If you wish to use Gemini, you will need to implement your own interface calls. The details can be found in [HunyuanVideo-1.5](https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5). 
 
-We recommend using `generate_custom_trajectory.py` for generating customized camera trajectory.
+### Configure Model Paths
+
+After running `download_models.py`, update `run.sh` with the printed model paths:
+
+```bash
+# These paths are printed by download_models.py after download completes
+MODEL_PATH=<path_printed_by_download_script>
+AR_ACTION_MODEL_PATH=<path_printed_by_download_script>/ar_model
+BI_ACTION_MODEL_PATH=<path_printed_by_download_script>/bidirectional_model
+AR_DISTILL_ACTION_MODEL_PATH=<path_printed_by_download_script>/ar_distilled_action_model
+```
+
+### Run Inference
+
+Edit `run.sh` to configure your settings, then run:
+
+```bash
+bash run.sh
+```
+
+### Configuration Options
+
+In `run.sh`, you can configure:
+
+| Parameter | Description |
+|-----------|-------------|
+| `PROMPT` | Text description of the scene |
+| `IMAGE_PATH` | Input image path (required for I2V) |
+| `NUM_FRAMES` | Number of frames to generate (default: 125) |
+| `N_INFERENCE_GPU` | Number of GPUs for parallel inference |
+| `POSE_JSON_PATH` | Camera trajectory file |
+
+### Model Selection
+
+Uncomment one of the three inference commands in `run.sh`:
+
+1. **Bidirectional Model** (best quality, slower):
+   ```bash
+   --action_ckpt $BI_ACTION_MODEL_PATH --model_type 'bi'
+   ```
+
+2. **Autoregressive Model** (balanced):
+   ```bash
+   --action_ckpt $AR_ACTION_MODEL_PATH --model_type 'ar'
+   ```
+
+3. **Distilled Model** (fastest, real-time capable):
+   ```bash
+   --action_ckpt $AR_DISTILL_ACTION_MODEL_PATH --few_step true --num_inference_steps 4 --model_type 'ar'
+   ```
+
+### Custom Camera Trajectories
+
+Use `generate_custom_trajectory.py` to create custom camera paths:
+
+```bash
+python generate_custom_trajectory.py
+```
+
+### Prompt Rewriting (Optional)
+
+For better prompts, you can enable prompt rewriting with a vLLM server:
 
 ```bash
 export T2V_REWRITE_BASE_URL="<your_vllm_server_base_url>"
 export T2V_REWRITE_MODEL_NAME="<your_model_name>"
-export I2V_REWRITE_BASE_URL="<your_vllm_server_base_url>"
-export I2V_REWRITE_MODEL_NAME="<your_model_name>"
-
-PROMPT='A paved pathway leads towards a stone arch bridge spanning a calm body of water.  Lush green trees and foliage line the path and the far bank of the water. A traditional-style pavilion with a tiered, reddish-brown roof sits on the far shore. The water reflects the surrounding greenery and the sky.  The scene is bathed in soft, natural light, creating a tranquil and serene atmosphere. The pathway is composed of large, rectangular stones, and the bridge is constructed of light gray stone.  The overall composition emphasizes the peaceful and harmonious nature of the landscape.'
-
-IMAGE_PATH=./assets/img/test.png # Now we only provide the i2v model, so the path cannot be None
-SEED=1
-ASPECT_RATIO=16:9
-RESOLUTION=480p                  # Now we only provide the 480p model
-OUTPUT_PATH=./outputs/
-MODEL_PATH=                      # Path to pretrained hunyuanvideo-1.5 model
-AR_ACTION_MODEL_PATH=            # Path to our HY-World 1.5 autoregressive checkpoints
-BI_ACTION_MODEL_PATH=            # Path to our HY-World 1.5 bidirectional checkpoints
-AR_DISTILL_ACTION_MODEL_PATH=    # Path to our HY-World 1.5 autoregressive distilled checkpoints
-POSE_JSON_PATH=./assets/pose/test_forward_32_latents.json   # Path to the customized camera trajectory
-NUM_FRAMES=125
-
-# Configuration for faster inference
-# For AR inference, the maximum number recommended is 4. For bidirectional models, it can be set to 8.
-N_INFERENCE_GPU=4 # Parallel inference GPU count.
-
-# Configuration for better quality
-REWRITE=false # Enable prompt rewriting. Please ensure rewrite vLLM server is deployed and configured.
-ENABLE_SR=false # Enable super resolution. When the NUM_FRAMES == 121, you can set it to true
-
-# inference with bidirectional model
-torchrun --nproc_per_node=$N_INFERENCE_GPU generate.py  \
-  --prompt "$PROMPT" \
-  --image_path $IMAGE_PATH \
-  --resolution $RESOLUTION \
-  --aspect_ratio $ASPECT_RATIO \
-  --video_length $NUM_FRAMES \
-  --seed $SEED \
-  --rewrite $REWRITE \
-  --sr $ENABLE_SR --save_pre_sr_video \
-  --pose_json_path $POSE_JSON_PATH \
-  --output_path $OUTPUT_PATH \
-  --model_path $MODEL_PATH \
-  --action_ckpt $BI_ACTION_MODEL_PATH \
-  --few_step false \
-  --model_type 'bi'
-
-# inference with autoregressive model
-#torchrun --nproc_per_node=$N_INFERENCE_GPU generate.py  \
-#  --prompt "$PROMPT" \
-#  --image_path $IMAGE_PATH \
-#  --resolution $RESOLUTION \
-#  --aspect_ratio $ASPECT_RATIO \
-#  --video_length $NUM_FRAMES \
-#  --seed $SEED \
-#  --rewrite $REWRITE \
-#  --sr $ENABLE_SR --save_pre_sr_video \
-#  --pose_json_path $POSE_JSON_PATH \
-#  --output_path $OUTPUT_PATH \
-#  --model_path $MODEL_PATH \
-#  --action_ckpt $AR_ACTION_MODEL_PATH \
-#  --few_step false \
-#  --model_type 'ar'
-
-# inference with autoregressive distilled model
-#torchrun --nproc_per_node=$N_INFERENCE_GPU generate.py  \
-#  --prompt "$PROMPT" \
-#  --image_path $IMAGE_PATH \
-#  --resolution $RESOLUTION \
-#  --aspect_ratio $ASPECT_RATIO \
-#  --video_length $NUM_FRAMES \
-#  --seed $SEED \
-#  --rewrite $REWRITE \
-#  --sr $ENABLE_SR --save_pre_sr_video \
-#  --pose_json_path $POSE_JSON_PATH \
-#  --output_path $OUTPUT_PATH \
-#  --model_path $MODEL_PATH \
-#  --action_ckpt $AR_DISTILL_ACTION_MODEL_PATH \
-#  --few_step true \
-#  --num_inference_steps 4 \
-#  --model_type 'ar'
+REWRITE=true  # in run.sh
 ```
 
 
