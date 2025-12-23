@@ -1,7 +1,9 @@
-export T2V_REWRITE_BASE_URL="<your_vllm_server_base_url>"
-export T2V_REWRITE_MODEL_NAME="<your_model_name>"
-export I2V_REWRITE_BASE_URL="<your_vllm_server_base_url>"
-export I2V_REWRITE_MODEL_NAME="<your_model_name>"
+#!/bin/bash
+# HY-WorldPlay - Video Generation Script
+# ==========================================
+# Uses Python 3.12 + SageAttention 2.x for best performance
+#
+# For interactive demo, use: ./run_interactive.sh
 
 PROMPT='A paved pathway leads towards a stone arch bridge spanning a calm body of water.  Lush green trees and foliage line the path and the far bank of the water. A traditional-style pavilion with a tiered, reddish-brown roof sits on the far shore. The water reflects the surrounding greenery and the sky.  The scene is bathed in soft, natural light, creating a tranquil and serene atmosphere. The pathway is composed of large, rectangular stones, and the bridge is constructed of light gray stone.  The overall composition emphasizes the peaceful and harmonious nature of the landscape.'
 
@@ -82,4 +84,4 @@ torchrun --nproc_per_node=$N_INFERENCE_GPU hyvideo/generate.py \
   --model_type 'ar' \
   --use_vae_parallel false \
   --use_sageattn false \
-  --use_fp8_gemm false \
+  --use_fp8_gemm false

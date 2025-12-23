@@ -1,0 +1,1018 @@
+                                                  WorldPlay: Towards Long-Term Geometric Consistency for Real-Time
+                                                                     Interactive World Modeling
+
+                                                     Wenqiang Sun* 1,3 , Haiyu Zhang* 2,3 , Haoyuan Wang* 3 , Junta Wu3 , Zehan Wang3 ,
+                                                    Zhenwei Wang3 , Yunhong Wang2 , Jun Zhang† 1 , Tengfei Wang† 3 , Chunchao Guo† 3
+                                               1
+                                                 Hong Kong University of Science and Technology 2 Beihang University 3 Tencent Hunyuan
+arXiv:2512.14614v1 [cs.CV] 16 Dec 2025
+
+
+
+
+                                          a) Real World                                     W                        W                            S                         S
+
+
+
+
+                                          b) Stylized World
+
+
+
+
+                                          c) Third-Person                                       W                        D                            A                         S
+
+                                                                                                                                                              Point Cloud
+
+
+
+
+                                          d) 3D Reconstruction
+                                                                                                                                   Smoke Spread
+
+
+
+
+                                          e) Promptable Event                                   W                        W                            W                         W
+
+
+                                         Figure 1. WorldPlay is a real-time, interactive world model that achieves long-term geometric consistency. It responds to user
+                                         navigation commands in a streaming fashion, while maintaining scenes remain coherent when revisiting (shown in red boxes). Our model
+                                         shows remarkable generalization across diverse scenes, including (a) real world, (b) stylized world, and (c) third-person agent control.
+                                         Furthermore, it supports (d) 3D scene generation via reconstruction and (e) dynamic world events triggered by text-based manipulation.
+
+                                                                      Abstract                                  tuted Context Memory dynamically rebuilds context from
+                                                                                                                past frames and uses temporal reframing to keep geomet-
+                                         This paper presents WorldPlay, a streaming video diffusion             rically important but long-past frames accessible, effec-
+                                         model that enables real-time, interactive world modeling               tively alleviating memory attenuation. 3) We also propose
+                                         with long-term geometric consistency, resolving the trade-             Context Forcing, a novel distillation method designed for
+                                         off between speed and memory that limits current methods.              memory-aware model. Aligning memory context between
+                                         WorldPlay draws power from three key innovations. 1) We                the teacher and student preserves the student’s capacity
+                                         use a Dual Action Representation to enable robust action               to use long-range information, enabling real-time speeds
+                                         control in response to the user’s keyboard and mouse in-               while preventing error drift. Taken together, WorldPlay
+                                         puts. 2) To enforce long-term consistency, our Reconsti-               generates long-horizon streaming 720p video at 24 FPS
+                                                                                                                with superior consistency, comparing favorably with exist-
+                                            * Equal contribution. † Corresponding author.                       ing techniques and showing strong generalization across
+
+
+                                                                                                            1
+diverse scenes. Project page and online demo can be                    to rewrite positional embeddings of these retrieved frames.
+found: https://3d-models.hunyuan.tencent.com/world/ and                This operation effectively “pulls” geometrically important
+https://3d.hunyuan.tencent.com/sceneTo3D.                              but long-past memories closer in time, forcing the model
+                                                                       to treat them as recent. This process keeps the influence of
+                                                                       relevant long-range information preserved, enabling robust
+1. Introduction                                                        free extrapolation with strong geometric consistency.
+                                                                           The final key ingredient is Context Forcing, a novel
+World models are driving a pivotal shift in computational              distillation method designed for memory-aware models to
+intelligence, moving beyond language-centric tasks towards             enable real-time generation. Existing distillation meth-
+visual and spatial reasoning. By simulating dynamic 3D en-             ods [6, 21, 70] fail to keep long-term memory as there is
+vironments, these models empower agents to perceive and                a fundamental distribution mismatch: training a memory-
+interact with complex surroundings, opening up new possi-              aware autoregressive student to mimic a memory-less bidi-
+bilities for embodied robotics and game development.                   rectional teacher. Even when augmenting teacher with
+    At the forefront of world modeling is real-time interac-           memory, mismatched memory context will cause distribu-
+tive video generation, which aims at autoregressively pre-             tion diverge. We solve this by aligning the memory con-
+dicting future video frames (or chunks) to deliver instant             text for teacher and student during distillation. This align-
+visual feedback in response to every user’s keyboard com-              ment facilitates effective distribution matching, enabling
+mand. Despite significant progress, a fundamental chal-                real-time speed without eroding the memory while allevi-
+lenge persists: how to simultaneously achieve real-time                ating error accumulation over long sequences.
+generation (speed) and long-term geometric consistency                     Taken together, WorldPlay achieves real-time, interac-
+(memory) in interactive world modeling. One class of meth-             tive video generation at 24 FPS (720p) while maintaining
+ods [9, 17, 49] prioritizes speed with distillation but neglects       long-term geometric consistency under streaming user con-
+memory, resulting in inconsistency where scenes change                 trol. The model is built on a large-scale, curated dataset of
+upon revisit. The other class preserves consistency with               320K real and synthetic videos with a custom rendering and
+explicit [32, 52] or implicit [67, 74] memory, but complex             processing platform. As shown in Fig. 1, WorldPlay shows
+memory makes distillation non-trivial (Sec. 3.4). As sum-              superior generation quality and remarkable generalization
+marized in Table 1, the simultaneous achievement of both               across diverse scenes including first- and third-person real
+low latency and high consistency remains an open problem.              and stylized worlds, and supports applications ranging from
+    To tackle this challenge, we develop WorldPlay, a real-            3D reconstruction and promptable events.
+time and long-term consistent world model for general
+scenes. We consider this problem as a next chunk (16                   2. Related Work
+frames) prediction task for generating streaming videos
+conditioned on action from users. Building upon autore-                Video Generation. Diffusion models [19, 41, 57] have
+gressive diffusion models, WorldPlay draws power from the              emerged as the state-of-the-art approach in video genera-
+model’s three key ingredients below.                                   tive modeling. [7, 15, 69] adopt the latent diffusion model
+    The first is Dual Action Representation for control over           (LDM) [53] to learn video distribution in the latent space,
+agent and camera movement. Previous works [9, 17, 49]                  achieving efficient video generation. Recently, autoregres-
+typically rely on discrete keyboard inputs (e.g., W, A, S,             sive video generation models [6, 18, 26] theoretically en-
+D) as action signals, which afford plausible, scale-adaptive           able one to generate unlimited length videos, laying the
+movement but suffer from ambiguity for memory retrieval                foundation for world models. With the advancement of
+that requires revisiting exact locations. Conversely, continu-         powerful architectures [50] and sophisticated data pipelines,
+ous camera poses (R, T ) provide spatial locations but cause           [10, 13, 28, 30, 47, 62], which are trained on web-scale
+training instability due to scene scale variance in training           datasets, have demonstrated emergent zero-shot capabilities
+data. To combine the best of both worlds, we convert ac-               to perceive, model, and manipulate the visual world [65],
+tion signals into continuous camera poses and discrete keys,           making it feasible to simulate the physical world.
+achieving robust control and accurate location caching.                Interactive and Consistent World Models. World mod-
+    The second key design is Reconstituted Context Mem-                els aim to predict future states based on current and past
+ory for maintaining long-term geometric consistency. We                observations and actions. Studies such as [1–3, 16, 29,
+actively reconstitute the memory through a two-stage pro-              31, 33, 46, 48, 59–61, 64, 75] adopt discrete or continu-
+cess, moving beyond simple retrieval [67, 74]. It first dy-            ous action signals to enable agents to navigate and interact
+namically rebuilds a context set by querying past frames               with virtual environments. Subsequent works that aim to
+based on spatial and temporal proximity. To overcome                   achieve geometric consistency can be categorized into two
+the long-range decay (the fading influence of distant to-              types: explicit 3D reconstruction and implicit conditioning.
+kens in Transformers [58]), we propose temporal reframing              [4, 32, 42, 52, 73, 76, 77] try to ensure spatial consistency
+
+
+                                                                   2
+                                      Matrix-Game
+                      Oasis [9]                        GameGenX [5]       GameCraft [31] WorldMem [67]       VMem [32]           WorldPlay
+                                        2.0 [17]
+    Resolution          360P              360p             720p                720p             360P            576p                  720p
+                                                                                                                             Continuous +
+   Action Space        Discrete         Discrete          Discrete          Continuous         Discrete      Continuous
+                                                                                                                               Discrete
+     Real-time           ✔                 ✔                 ✗                  ✗                 ✗               ✗                    ✔
+    Long-term
+                          ✗                ✗                 ✗                  ✗                ✔               ✔                     ✔
+    Consistency
+   Long-Horizon           ✗                ✔                 ✔                  ✗                 ✗               ✗                    ✔
+     Domain           Minecraft         General           General            General          Minecraft      Static Scene            General
+
+Table 1. Comparison with recent interactive world models. WorldPlay distinguishes itself as a general-domain model that simultaneously
+achieves long-horizon video generation, flexible action control, real-time interactivity, and long-term geometric consistency.
+
+
+by explicitly reconstructing 3D representations and render-              that describes the world. For simplicity of notation, we
+ing condition frames from these representations. However,                omit A, a, c in following sections. We first introduce the
+they heavily rely on reconstruction quality, making it chal-             relevant preliminaries in Sec. 3.1. In Sec. 3.2, we discuss
+lenging to maintain long-term consistency. Other recent                  the action representation for control. Sec. 3.3 describes our
+works [23] construct 3D world models explicitly, without                 reconstituted context memory to ensure long-term geomet-
+relying on video generation models. Although achieving                   ric consistency, followed by Sec. 3.4 covering our context
+promising 3D generation results, these lines of methods                  forcing, which mitigates exposure bias and enables few-step
+can not be performed in real-time usage cases. In con-                   generation while maintaining long-term consistency. Fi-
+trast, [67, 74] achieve implicit conditioning by leveraging              nally, Sec. 3.5 details additional optimizations for real-time
+field-of-view (FOV) to retrieve relevant context from his-               streaming generation. The pipeline is shown in Fig. 2.
+torical frames, demonstrating strong scalability. However,
+developing a real-time world model that maintains geomet-                3.1. Preliminaries
+ric consistency remains an open question.                                Full-sequence Video Diffusion Model. Current video dif-
+Distillation. Real-time capability is also an essential prop-            fusion models [28, 62] typically consist of a causal 3D
+erty for world models. For video diffusion models, existing              VAE [27] and a Diffusion Transformer (DiT) [50], where
+approaches typically employ distillation [12, 14, 35, 54, 78]            each DiT block is composed of 3D self-attention, cross-
+to achieve few-step inference, thereby achieving real-time               attention, and feedforward network (FFN). The diffusion
+generation. For instance, [24, 37–39, 55, 56] adopt adver-               timestep is processed by positional embedding (PE) and a
+sarial training strategies to enable few-step inference, how-            Multi-Layer Perceptron (MLP) to modulate the DiT blocks.
+ever, they often suffer from training instability and mode               The model is trained using flow matching [41]. Specif-
+collapse. [45, 70, 71] utilize Variational Score Distillation            ically, given a video latent z0 encoded by the 3D VAE,
+(VSD) [63] to achieve outstanding few-step generation per-               a random noise z1 ∼ N (0, I), and a diffusion timestep
+formance. In addition, CausVid [72] proposes distilling a                k ∈ [0, 1], an intermediate latent zk is obtained through
+causal student model from a bidirectional teacher diffusion              linear interpolation. The model is trained to predict the ve-
+model to achieve real-time autoregressive generation. Fur-               locity vk = z0 − z1 ,
+thermore, Self-Forcing [21] addresses exposure bias by re-                                                                   2
+fining the rollout strategy of CausVid. Our method proposes                           LFM (θ) = Ek,z0 ,z1 Nθ (zk , k) − vk       .           (1)
+context forcing to preserve both the interactivity and geo-
+metric consistency while achieving real-time generation.                 Chunk-wise Autoregressive Generation. However, the
+                                                                         full-sequence video diffusion model is a non-causal archi-
+3. Method                                                                tecture, which limits its ability for infinite-length interactive
+                                                                         generation. Inspired by Diffusion Forcing [6], we finetune
+Our goal is to construct a geometry-consistent and real-                 it into a chunk-wise autoregressive video generation model.
+time interactive world model Nθ (xt |Ot−1 , At−1 , at , c) pa-           Specifically, for video latent z0 ∈ RC×T ×H×W , we divide
+rameterized by θ, which can generate next chunk xt (a                    it into T4 chunks {z0i ∈ RC×4×H×W |i = 0, ..., T4 − 1}, and
+chunk is a few frames) based on past observations Ot−1 =                 thus each chunk (4 latents) can be decoded into 16 frames.
+{xt−1 , ..., x0 }, action sequences At−1 = {at−1 , ..., a0 },            During training, we add different noise levels ki for each
+and current action at . Here, c is a text prompt or image                chunk and modify the full-sequence self-attention to block
+
+
+                                                                     3
+Figure 2. Method overview. Given a single image or text prompt to describe a world, WorldPlay performs a next chunk (16 video frames)
+prediction task to generate future videos conditioned on action from users. For the generation of each chunk, we dynamically reconstitute
+context memory from past chunks to enforce long-term temporal and geometric consistency.
+
+
+                                                                           training only with camera poses faces challenges in training
+                                                                           stability due to the scale variance in the training data. To ad-
+                                                                           dress this, we propose a dual action representation that com-
+                                                                           bines the best of both worlds as shown in Fig. 3. This design
+                                                                           not only caches spatial locations for our memory module in
+                                                                           Sec. 3.3, but also enables robust and precise control. Specif-
+                                                                           ically, we employ PE and a zero-initialized MLP to encode
+                                                                           discrete keys and incorporate it into the timestep embed-
+                                                                           ding, which is then used to modulate the DiT blocks. For
+                                                                           continuous camera pose, we leverage relative positional en-
+                                                                           coding, i.e., PRoPE [33], which offers greater generalizabil-
+                                                                           ity than commonly used raymaps, to inject complete cam-
+                                                                           era frustums into self-attention blocks. The original self-
+                                                                           attention computation is as follows,
+Figure 3. Detailed architecture of our autoregressive diffusion
+transformer. The discrete key is incorporated with time embed-
+                                                                                     Attn1 = Attn(R⊤ ⊙ Q, R−1 ⊙ K, V ),                (2)
+ding, while the continuous camera pose is injected into causal self-
+attention through PRoPE [33].                                              where R represents the 3D rotary PE (RoPE) [58] for video
+                                                                           latents. To encode frustum relationships between cameras,
+                                                                           we utilize an additional attention computation,
+causal attention. The training loss is similar to Eq. 1.
+                                                                                   Attn2 =Dproj ⊙ Attn((Dproj )⊤ ⊙ Q,
+3.2. Dual Action Representation for Control                                                                                            (3)
+                                                                                             (Dproj )−1 ⊙ K, (Dproj )−1 ⊙ V ),
+Existing methods use keyboard and mouse inputs as ac-
+tion signals and inject the action control via MLP [9, 67]                 here, Dproj is derived from the camera’s intrinsic and ex-
+or attention blocks [17, 74]. This enables the model to                    trinsic parameters, as described in [33]. Finally, the result
+learn physically plausible movements across scenes with di-                of each self-attention block is Attn1 + zero init(Attn2 ).
+verse scales (e.g. very large and small scenes). However,
+they struggle to provide precise previous locations for spa-
+                                                                           3.3. Reconstituted Context Memory for Consistency
+tial memory retrieval. In contrast, camera poses (rotation                 Maintaining long-term geometric consistency requires re-
+matrix and translation vector) provide accurate spatial loca-              calling past frames, ensuring content remains unchanged
+tions that facilitate precise control and memory retrieval, but            when revisiting to a previous location. However, naively
+
+
+                                                                       4
+   (a) Full context    (b) Absolute indices   (c) Relative indices
+Figure 4. Memory mechanism comparisons. The red and blue                 Figure 5. Context forcing is a novel distillation method that
+blocks represent the memory and current chunk, respectively. The         employs memory-augmented self-rollout and memory-augmented
+number in each block represents the temporal index in RoPE. For          bidirectional video diffusion to preserve long-term consistency,
+simplicity of illustration, each chunk only contains one frame.          enable real-time interaction, and mitigate error accumulation.
+
+
+
+using all past frames as context (Fig. 4a) is computation-               into a fast, few-step autoregressive student. These tech-
+ally intractable and redundant for long sequences. To ad-                niques force the student’s output distribution pθ (x0:t ) to
+dress this, we rebuild a memory context Ct from past                     align with the teacher’s, thereby improving generation qual-
+chunks Ot−1 for each new chunk xt . Our approach ad-                     ity by employing a distribution matching loss [70]:
+vances beyond prior work [67, 74] by combining both short-
+term temporal cues and long-range spatial references: 1) A                   ∇θ LDM D = Ek (∇θ KL(pθ (x0:t )||pdata (x0:t ))),       (4)
+temporal memory (CtT ) comprises L most recent chunks
+                                                                         where the gradient of the reverse KL can be approximated
+{xt−L , ..., xt−1 } to ensure short-term motion smoothness.
+                                                                         by the score difference derived from teacher model.
+2) A spatial memory (CtS ) samples from non-adjacent past
+                                                                            However, these methods are incompatible with memory-
+frames to prevent geometric drift over long sequences,
+                                                                         aware models due to a critical distribution mismatch. Stan-
+where CtS ⊆ Ot−1 − CtT . This sampling is guided by ge-
+                                                                         dard teacher diffusion models are trained on short clips
+ometric relevance scores that incorporate both FOV overlap
+                                                                         and are inherently memory-less. Even if a teacher is aug-
+and camera distance.
+                                                                         mented with memory, its bidirectional nature inevitably dif-
+    Once memory context is rebuilt, the challenge shifts to
+                                                                         fers from the student’s causal, autoregressive process. This
+applying them to enforce consistency. Effectively using re-
+                                                                         means that without a meticulously designed memory con-
+trieved context requires overcoming a fundamental flaw in
+                                                                         text to mitigate this gap, the difference in memory con-
+positional encodings. With standard RoPE (Fig.4b), the dis-
+                                                                         text will make their conditional distributions p(x|C) mis-
+tance between the current chunk and past memory grows
+                                                                         aligned, which in turn causes distribution matching to fail.
+unbounded over time. This growing relative distance can
+                                                                            We thus propose context forcing as shown in Fig. 5,
+eventually exceed the trained interpolation range in RoPE,
+                                                                         which alleviates the memory context misalignment between
+causing extrapolation artifacts [58]. More critically, the
+                                                                         teacher and student for distillation. For the student model,
+growing perceived distance to these long-past spatial mem-
+                                                                         we self-rollouts 4 chunks conditioned on the memory con-
+ory would weaken their influence on the current prediction.                                          j+3
+                                                                                                      Q
+To resolve this, we propose Temporal Reframing (Fig.4c).                 text pθ (xj:j+3 |x0:j−1 ) =     pθ (xi |Ci ).
+We discard the absolute temporal indices, and dynamically                                            i=j
+
+re-assign new positional encodings to all context frames, es-               To construct our teacher model Vβ , we augment a stan-
+tablishing a fixed, small relative distance to the current, irre-        dard bidirectional diffusion model with memory, and struc-
+spective of their actual temporal gap. This operation effec-             ture its context by masking xj:j+3 from student’s memory
+tively “pulls” important past frames closer in time, ensuring            context,
+they remain influential and enabling robust extrapolation for
+long-term consistency.
+                                                                          pdata (xj:j+3 |x0:j−1 ) = pβ (xj:j+3 |Cj:j+3 − xj:j+3 ), (5)
+3.4. Context Forcing
+                                                                         where Cj:j+3 denotes all context memory chunks corre-
+Autoregressive models often suffer from error accumulation               sponding to student’s self-rollout xj:j+3 . By aligning the
+during long video generation, leading to degraded visual                 memory context with the student model, we enforce the dis-
+quality over time [21, 72]. Moreover, the multi-step denois-             tributions represented by the teacher to be as close as pos-
+ing of diffusion models is too slow for real-time interaction.           sible to the student model, which enables more effectively
+Recent methods [8, 21, 43, 68] address these challenges by               distribution matching. Moreover, this avoids training Vβ on
+distilling a powerful bidirectional teacher diffusion model              long videos and redundant context, facilitating the learning
+
+
+                                                                     5
+                                  Ours
+
+
+                                                W               A               D                D               S               S
+                                                                                                      D                S
+                                  Gen3C
+   W
+ A S D                                          W               A               D                D               S               S
+
+                                  Ours
+
+
+
+
+                                  GameCraft
+
+   W
+ A S D
+
+                                  Ours
+
+
+                                                D               D               D                A               A               A
+
+                                  GameCraft
+
+   W
+ A S D                                          D               D               D                A               A               A
+
+                                  Ours
+
+
+                                                                                W                S
+
+                                  Matrix-Game 2.0
+   W
+ A S D                                                                          W                S
+
+                                  Ours
+
+
+                                                W               W               D                D               D               D
+
+                                  Matrix-Game 2.0
+   W
+ A S D                                          W               W               D                D               D               D
+
+
+Figure 6. Qualitative comparisons with existing methods. WorldPlay achieves the state-of-the-art long-term consistency (shown in red
+boxes) and visual quality across diverse scenes, including both first- and third-person real and stylized worlds.
+
+
+of long-term visual distribution. Through context forcing,           tion, we adopt a streaming deployment architecture using
+we preserve long-term consistency in real-time generation            NVIDIA Triton Inference Framework and implement a pro-
+with 4-denoising steps, and mitigate error accumulation.             gressive multi-step VAE decoding strategy that decodes and
+                                                                     streams frames in smaller batches. Upon generating latent
+3.5. Streaming Generation with Real-Time Latency                     representations from the DiT, frames are progressively de-
+We augment context forcing with a suite of optimizations to          coded, allowing users to observe generated content while
+minimize latency, unlocking an interactive streaming expe-           subsequent frames are still being processed. This streaming
+rience at 24 FPS and 720p resolution on 8×H800 GPUs.                 pipeline ensures smooth, low-latency interaction even under
+Mixed parallelism method for DiT and VAE. Unlike the                 varying computational loads.
+conventional parallelism method that replicates the entire
+model or adapting sequence parallelism on the temporal di-
+mension, our parallelism method combines sequence par-
+allelism [34] and attention parallelism, which partitions            Quantization and efficient attention. Furthermore, we
+the tokens of each entire chunk across devices. This de-             employ a comprehensive suite of quantization strategies.
+sign ensures that the computational workload for generating          Specifically, we adopt Sage Attention [79], float quanti-
+each chunk is distributed evenly, substantially reducing per-        zation, and matrix multiplication quantization to improve
+chunk inference time while maintaining generation quality.           the inference performance. Additionally, we use KV-cache
+Streaming deployment and progressive decoding. To                    mechanisms for attention modules to eliminate redundant
+minimize time-to-first-frame and enable seamless interac-            computations during autoregressive generation.
+
+
+                                                                 6
+                                                        Short-term (61 frames)                             Long-term (≥ 250 frames)
+                                 Real-time   PSNR ↑   SSIM ↑    LPIPS ↓       Rdist ↓   Tdist ↓   PSNR ↑   SSIM ↑   LPIPS ↓    Rdist ↓   Tdist ↓
+    CameraCtrl [16]                 ✗         17.93   0.569      0.298        0.037     0.341      10.09   0.241      0.549     0.733    1.117
+    SEVA [80]                       ✗         19.84   0.598      0.313        0.047     0.223      10.51   0.301      0.517     0.721    1.893
+    ViewCrafter [77]                ✗         19.91   0.617      0.327        0.029     0.543      9.32    0.277      0.661     1.573    3.051
+    Gen3C [52]                      ✗         21.68   0.635      0.278        0.024     0.477      15.37   0.431      0.483     0.357    0.979
+    VMem [64]                       ✗         19.97   0.587      0.316        0.048     0219       12.77   0.335      0.542     0.748    1.547
+    Matrix-Game-2.0 [17]            ✔         17.26   0.505      0.383        0.287     0.843      9.57    0.205      0.631     2.125    2.742
+    GameCraft [31]                  ✗         21.05   0.639      0.341        0.151     0.617      10.09   0.287      0.614     2.497    3.291
+    Ours (w/o Context Forcing)      ✗         21.27   0.669      0.261        0.033     0.157      16.27   0.425      0.495     0.611    0.991
+    Ours (full)                     ✔         21.92   0.702      0.247        0.031     0.121      18.94   0.585      0.371     0.332    0.797
+
+Table 2. Quantitative comparisons. We compare against both methods without memory, i.e., CameraCtrl [16], SEVA [80],
+ViewCrafter [77], Matrix-Game-2.0 [17], and GameCraft [31], and methods with memory, i.e., Gen3C [52], VMem [32]. Our method
+achieves superior results, particularly in long-term settings, which more clearly demonstrate the long-term consistency.
+
+
+4. Experiments                                                                 various baselines, which mainly fall into two categories: 1)
+                                                                               Action-controlled diffusion models without memory: Cam-
+Dataset. WorldPlay is trained on a comprehensive dataset                       eraCtrl [16], SEVA [80], ViewCrafter [77], Matrix-Game
+comprising approximately 320K high-quality video sam-                          2.0 [17] and GameCraft [31]; 2) Action-controlled diffusion
+ples derived from both real-world footage and synthetic en-                    models with memory: Gen3C [52] and VMem [32]. More
+vironments. For real-world videos, we start with publicly                      evaluation results can be found in our appendix.
+available real video sources [36, 40] and remove short, low-
+quality clips, as well as samples containing watermarks, UI,                   4.1. Main Result
+dense crowds, or erratic camera movement. To mitigate the
+                                                                               Quantitative Results. As shown in Table 2, in the short-
+monotonous motion common in original videos, we adopt
+                                                                               term regime, our approach achieves superior visual fi-
+3D Gaussian Splatting [25] for 3D reconstruction on cu-
+                                                                               delity and maintains competitive control accuracy. Al-
+rated videos. We then render customized videos from these
+                                                                               though methods leveraging explicit 3D representations (i.e.
+3D scenes using novel revisit trajectories. The renderings
+                                                                               ViewCrafter [77], Gen3C [52]) realize more accurate rota-
+are further refined using Difix3D+ [66] to repair floating ar-
+                                                                               tion, they suffer from issues such as the inaccurate depth
+tifacts, yielding an additional 100K high-quality real video
+                                                                               estimation and inconsistent scale when performing move-
+clips. For synthetic data, we collect hundreds of UE scenes
+                                                                               ment translations. For more challenging long-term scenar-
+and generate 50K video clips by rendering complex, cus-
+                                                                               ios, where action accuracy generally degrades, our method
+tomized trajectories. Also, we build a game recording plat-
+                                                                               remains more stable and achieves the best performance.
+form and invite dozens of players to collect 170k samples
+                                                                               Regarding long-term geometric consistency, Matrix-Game-
+from 1st/3rd-person AAA games with designed trajectories.
+                                                                               2.0 [17] and GameCraft [31] exhibit poor performance due
+We segment each video into clips and use a vision-language
+                                                                               to the lack of memory mechanism. Although VMem [32]
+model [81] to generate text annotations. For videos without
+                                                                               and Gen3C [52] employ explicit 3D cache to maintain con-
+action annotations, we employ VIPE [20] to label.
+                                                                               sistency, they are constrained by depth accuracy and align-
+Evaluation Protocol. Our test set comprises 600 cases                          ment, making it difficult to achieve robust long-term con-
+sourced from DL3DV, game videos, and AI-generated im-                          sistency. Benefiting from Reconstituted Context Memory,
+ages spanning a range of styles. For the short-term setting,                   we achieve improved long-term consistency. Moreover,
+we utilize the camera trajectories from the test videos as the                 through context forcing, we further prevent error accumu-
+input pose. The generated video frames are directly com-                       lation, resulting in better visual quality and action accu-
+pared against the Ground-Truth (GT) frames to assess vi-                       racy. Crucially, WorldPlay concurrently achieves the req-
+sual quality and camera pose accuracy. For the long-term                       uisite real-time interactivity for immersive simulation.
+setting, we test the long-term consistency using various cus-                  Qualitative Results. We provide qualitative comparisons
+tom cycle camera trajectories designed to enforce revisiting.                  with baselines in Fig. 6. The explicit 3D cache used in
+Each model generates frames along a customize trajectory                       Gen3C [52] is highly sensitive to the quality of interme-
+and then returns along the same path, metrics are evaluated                    diate outputs and limited by the accuracy of depth estima-
+on the return path by comparing the generated frame to the                     tion. Conversely, our reconstituted context memory guaran-
+corresponding frame generated during the initial pass. We                      tees long-term consistency with more robust implicit prior,
+employ LPIPS, PSNR, and SSIM to measure visual quality                         achieving superior scene generalizability. Matrix-Game-
+and Rdist and Tdist to quantify action accuracy.                               2.0 [17] and GameCraft [31] fail to support free exploration
+Baselines. We conduct comprehensive comparisons against                        due to the lack of memory. Furthermore, they do not gen-
+
+
+                                                                          7
+           Action                        PSNR↑                  SSIM↑   LPIPS↓       Rdist ↓         Tdist ↓                                                       PSNR↑       SSIM↑   LPIPS↓         Rdist ↓     Tdist ↓
+           Discrete                        21.47                0.661    0.248       0.103           0.615                       RoPE                              14.03       0.358    0.534            0.805    1.341
+           Continuous                      21.93                0.665    0.231       0.038           0.287                       Reframed RoPE                     16.27       0.425    0.495            0.611    0.991
+           Full                            22.09                0.687    0.219       0.028           0.113
+                                                                                                                           Table 4. Ablation for positional encoding design in memory.
+Table 3. Ablation for action representation. We conduct valida-                                                            The results are evaluated on the long-term test data.
+tion using the bidirectional model.
+                                                                                                                           a) Misaligned Context
+
+a) RoPE                                                                                     Error Accumulation
+
+
+
+                                                                                                                                                                                 W                   S                      S
+
+                                                                  W              A                                 D        b) Self-rollout Context
+b) Reframed RoPE (Ours)
+
+
+
+                                                                                                                                                                                 W                   S                      S
+                                                                  W              A                                 D       c) Ours
+                                      a) RoPE                                            Geometric Inconsistency
+
+
+
+
+  A colossal stone Buddha statue
+                                                                                                                                                                                 W                   S                      S
+ dominates the center of the image,                               W              A                                 S
+  nestled between towering, mist-
+ shrouded cliffs. A burning incense   b) Reframed RoPE (Ours)
+ burner sits in the foreground on a
+       snow-covered ground.                                                                                                Figure 8. Ablation for context forcing. a) When the teacher
+                                                                                                                           and student have misaligned context, it leads to distillation failure,
+                                                                  W              A                                 S
+                                                                                                                           resulting in collapsed outputs. b) Self-rollout historical context
+Figure 7. RoPE design comparisons. Upper: Our reframed                                                                     can introduce artifacts. Zoom in for details.
+RoPE avoids exceeding the the positional range in standard RoPE,                                                                                                                            Balloon Appears
+
+alleviating error accumulation. Bottom: By maintaining a small
+relative distance to long-range spatial memory, it achieves better
+                                                                                                                                                                           W            W                     W             W
+long-term consistency.                                                                                                                                                                      Rainbow Arches
+                                                                                                                             A wide open meadow stretches to
+                                                                                                                            the horizon, covered with colourful
+                                                                                                                             wildflowers swaying gently in the
+                                                                                                                           wind. The scene feels bright and calm
+                                                                                                                                   under the midday sun.
+
+                                                                                                                                                                           W            W                     W             W
+
+
+eralize well to third-person scenarios, making it difficult to
+control agents within the scene and limiting their applica-                                                                Figure 9. Promptable event. Our method supports text-based
+bility. In contrast, WorldPlay successfully extends its ef-                                                                manipulation during streaming.
+ficacy to these scenarios and maintains high visual fidelity
+and long-term geometric consistency.
+                                                                                                                           context between the teacher and student model, leading to
+4.2. Ablation                                                                                                              collapsed results as shown in Fig. 8a. Additionally, for
+                                                                                                                           the past chunks x0:j−1 , we attempt to self-rollout histori-
+Action Representation. Table. 3 validates the effective-                                                                   cal chunks as context following the inference-time recipe as
+ness of the proposed dual-action representation. When us-                                                                  in [68]. However, this may cause the bidirectional diffusion
+ing only discrete keys as action signals, the model strug-                                                                 model to provide inaccurate score estimation, as it is trained
+gles to achieve fine-grained control, such as the distance of                                                              using clean chunks as memory. Consequently, this discrep-
+movement or the degree of rotation, resulting in poor perfor-                                                              ancy introduces artifacts as illustrated in Fig. 8b. We ob-
+mance on Rdist and Tdist metrics. Using continuous camera                                                                  tain historical chunks by sampling from real videos, which
+poses yields better results but converges more difficult due                                                               yields superior results as shown in Fig. 8c.
+to scale variance. By employing the dual-action representa-
+tion, we achieve the best overall control performance.                                                                     4.3. Application
+RoPE Design. Table. 4 presents the quantitative results                                                                    3D Reconstruction. Benefiting from the long-term geo-
+of different RoPE designs within the memory mechanism,                                                                     metric consistency, we can integrate a 3D reconstruction
+showing that reframed rope outperforms naive counterparts,                                                                 model [44] to produce high-quality point clouds, as pre-
+especially on visual metrics. As illustrated in the upper part                                                             sented in Fig. 1 (d).
+of Fig. 7, RoPE is more prone to error accumulation. It
+                                                                                                                           Promptable Event. Beyond navigation control, WorldPlay
+also increases the distance between memory and predicted
+                                                                                                                           supports text-based interaction to trigger dynamic world
+chunk due to absolute temporal indices, resulting in weaker
+                                                                                                                           events. As shown in Fig. 9 and Fig. 1 (e), users can prompt
+geometric consistency, as shown in the lower part of Fig. 7.
+                                                                                                                           at any time to responsively alter the ongoing stream.
+Context Forcing. To verify the importance of memory
+alignment, we train the teacher model following [74], where                                                                5. Conclusion
+the memory is selected at latent level rather than at chunk
+level. Although this may reduce the number of memory                                                                       WorldPlay is a powerful world model with real-time inter-
+context in the teacher model, it also introduce misaligned                                                                 action and long-term geometric consistency. It empowers
+
+
+                                                                                                                       8
+users to customize unique worlds from a single image or                  [13] Yu Gao, Haoyuan Guo, Tuyen Hoang, Weilin Huang, Lu
+text prompt. While focused on navigation control, its ar-                     Jiang, Fangyuan Kong, Huixia Li, Jiashi Li, Liang Li, Xi-
+chitecture has shown potential for richer interaction like                    aojie Li, et al. Seedance 1.0: Exploring the boundaries of
+dynamic, text-triggered events. By providing a systematic                     video generation models. arXiv preprint arXiv:2506.09113,
+framework for control, memory, and distillation, WorldPlay                    2025. 2
+                                                                         [14] Zhengyang Geng, Mingyang Deng, Xingjian Bai, J Zico
+marks a critical step toward creating consistent and interac-
+                                                                              Kolter, and Kaiming He. Mean flows for one-step genera-
+tive virtual worlds. Extending it to generate longer videos
+                                                                              tive modeling. arXiv preprint arXiv:2505.13447, 2025. 3
+with multi-agent interaction and complex physical dynam-                 [15] Yuwei Guo, Ceyuan Yang, Anyi Rao, Zhengyang Liang,
+ics would be fruitful future directions.                                      Yaohui Wang, Yu Qiao, Maneesh Agrawala, Dahua Lin, and
+                                                                              Bo Dai. Animatediff: Animate your personalized text-to-
+References                                                                    image diffusion models without specific tuning. In ICLR,
+                                                                              2024. 2
+ [1] Eloi Alonso, Adam Jelley, Vincent Micheli, Anssi Kan-               [16] Hao He, Yinghao Xu, Yuwei Guo, Gordon Wetzstein, Bo
+     ervisto, Amos J Storkey, Tim Pearce, and François Fleuret.              Dai, Hongsheng Li, and Ceyuan Yang. Cameractrl: Enabling
+     Diffusion for world modeling: Visual details matter in atari.            camera control for text-to-video generation. In ICLR, 2025.
+     Advances in Neural Information Processing Systems, 37:                   2, 7
+     58757–58791, 2024. 2                                                [17] Xianglong He, Chunli Peng, Zexiang Liu, Boyang Wang,
+ [2] Sherwin Bahmani, Ivan Skorokhodov, Guocheng Qian, Ali-                   Yifan Zhang, Qi Cui, Fei Kang, Biao Jiang, Mengyin An,
+     aksandr Siarohin, Willi Menapace, Andrea Tagliasacchi,                   Yangyang Ren, et al. Matrix-game 2.0: An open-source,
+     David B Lindell, and Sergey Tulyakov. Ac3d: Analyzing                    real-time, and streaming interactive world model. arXiv
+     and improving 3d camera control in video diffusion trans-                preprint arXiv:2508.13009, 2025. 2, 3, 4, 7
+     formers. In CVPR, pages 22875–22889, 2025.                          [18] Roberto Henschel, Levon Khachatryan, Hayk Poghosyan,
+ [3] Amir Bar, Gaoyue Zhou, Danny Tran, Trevor Darrell, and                   Daniil Hayrapetyan, Vahram Tadevosyan, Zhangyang Wang,
+     Yann LeCun. Navigation world models. In CVPR, pages                      Shant Navasardyan, and Humphrey Shi. Streamingt2v: Con-
+     15791–15801, 2025. 2                                                     sistent, dynamic, and extendable long video generation from
+ [4] Chenjie Cao, Jingkai Zhou, Shikai Li, Jingyun Liang,                     text. In CVPR, pages 2568–2577, 2025. 2
+     Chaohui Yu, Fan Wang, Xiangyang Xue, and Yanwei Fu.                 [19] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising dif-
+     Uni3c: Unifying precisely 3d-enhanced camera and hu-                     fusion probabilistic models. Advances in neural information
+     man motion controls for video generation. arXiv preprint                 processing systems, 33:6840–6851, 2020. 2
+     arXiv:2504.14899, 2025. 2                                           [20] Jiahui Huang, Qunjie Zhou, Hesam Rabeti, Aleksandr Ko-
+ [5] Haoxuan Che, Xuanhua He, Quande Liu, Cheng Jin, and                      rovko, Huan Ling, Xuanchi Ren, Tianchang Shen, Jun Gao,
+     Hao Chen. Gamegen-x: Interactive open-world game video                   Dmitry Slepichev, Chen-Hsuan Lin, et al. Vipe: Video
+     generation. arXiv preprint arXiv:2411.00769, 2024. 3                     pose engine for 3d geometric perception. arXiv preprint
+ [6] Boyuan Chen, Diego Martı́ Monsó, Yilun Du, Max Sim-                     arXiv:2508.10934, 2025. 7, 2
+     chowitz, Russ Tedrake, and Vincent Sitzmann. Diffusion              [21] Xun Huang, Zhengqi Li, Guande He, Mingyuan Zhou,
+     forcing: Next-token prediction meets full-sequence diffu-                and Eli Shechtman. Self forcing: Bridging the train-
+     sion. Advances in Neural Information Processing Systems,                 test gap in autoregressive video diffusion. arXiv preprint
+     37:24081–24125, 2024. 2, 3                                               arXiv:2506.08009, 2025. 2, 3, 5, 1
+ [7] Haoxin Chen, Yong Zhang, Xiaodong Cun, Menghan Xia,                 [22] Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si,
+     Xintao Wang, Chao Weng, and Ying Shan. Videocrafter2:                    Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin,
+     Overcoming data limitations for high-quality video diffusion             Nattapol Chanpaisit, et al. Vbench: Comprehensive bench-
+     models. In CVPR, pages 7310–7320, 2024. 2                                mark suite for video generative models. In Proceedings of
+                                                                              the IEEE/CVF Conference on Computer Vision and Pattern
+ [8] Justin Cui, Jie Wu, Ming Li, Tao Yang, Xiaojie Li, Rui
+                                                                              Recognition, pages 21807–21818, 2024. 5, 6
+     Wang, Andrew Bai, Yuanhao Ban, and Cho-Jui Hsieh. Self-
+                                                                         [23] Team HunyuanWorld. Hunyuanworld 1.0: Generating im-
+     forcing++: Towards minute-scale high-quality video genera-
+                                                                              mersive, explorable, and interactive 3d worlds from words
+     tion. arXiv preprint arXiv:2510.02283, 2025. 5
+                                                                              or pixels. arXiv preprint, 2025. 3
+ [9] Etched Decart. Oasis: A universe in a transformer. https:           [24] Minguk Kang, Richard Zhang, Connelly Barnes, Sylvain
+     //oasis-model.github.io/, 2024. 2, 3, 4                                  Paris, Suha Kwak, Jaesik Park, Eli Shechtman, Jun-Yan Zhu,
+[10] Google Deepmind. Veo3 video model, 2025. https://                        and Taesung Park. Distilling diffusion models into condi-
+     deepmind.google/models/veo/. 2                                           tional gans. In ECCV, pages 428–447. Springer, 2024. 3
+[11] Haoyi Duan, Hong-Xing Yu, Sirui Chen, Li Fei-Fei, and Ji-           [25] Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler,
+     ajun Wu. Worldscore: A unified evaluation benchmark for                  and George Drettakis. 3d gaussian splatting for real-time
+     world generation. arXiv preprint arXiv:2504.00983, 2025. 6               radiance field rendering. ACM Trans. Graph., 42(4):139–1,
+[12] Kevin Frans, Danijar Hafner, Sergey Levine, and Pieter                   2023. 7
+     Abbeel. One step diffusion via shortcut models. arXiv               [26] Jihwan Kim, Junoh Kang, Jinyoung Choi, and Bohyung Han.
+     preprint arXiv:2410.12557, 2024. 3                                       Fifo-diffusion: Generating infinite videos from text without
+
+
+                                                                     9
+     training. Advances in Neural Information Processing Sys-             [41] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximil-
+     tems, 37:89834–89868, 2024. 2                                             ian Nickel, and Matt Le. Flow matching for generative mod-
+[27] Diederik P Kingma and Max Welling. Auto-encoding varia-                   eling. In ICLR, 2023. 2, 3
+     tional bayes. arXiv preprint arXiv:1312.6114, 2013. 3                [42] Fangfu Liu, Wenqiang Sun, Hanyang Wang, Yikai Wang,
+[28] Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai,                 Haowen Sun, Junliang Ye, Jun Zhang, and Yueqi Duan. Re-
+     Jin Zhou, Jiangfeng Xiong, Xin Li, Bo Wu, Jianwei Zhang,                  conx: Reconstruct any scene from sparse views with video
+     et al. Hunyuanvideo: A systematic framework for large video               diffusion model. arXiv preprint arXiv:2408.16767, 2024. 2
+     generative models. arXiv preprint arXiv:2412.03603, 2024.            [43] Kunhao Liu, Wenbo Hu, Jiale Xu, Ying Shan, and Shijian
+     2, 3, 1                                                                   Lu. Rolling forcing: Autoregressive long video diffusion in
+[29] Xin Kong, Shikun Liu, Xiaoyang Lyu, Marwan Taher, Xi-                     real time. arXiv preprint arXiv:2509.25161, 2025. 5
+     aojuan Qi, and Andrew J Davison. Eschernet: A generative             [44] Yifan Liu, Zhiyuan Min, Zhenwei Wang, Junta Wu, Tengfei
+     model for scalable view synthesis. In CVPR, pages 9503–                   Wang, Yixuan Yuan, Yawei Luo, and Chunchao Guo. World-
+     9513, 2024. 2                                                             mirror: Universal 3d world reconstruction with any-prior
+[30] Kuaishou.      Kling video model, 2024.        https : / /                prompting. arXiv preprint arXiv:2510.10726, 2025. 8
+     klingai.com/global/. 2                                               [45] Yanzuo Lu, Yuxi Ren, Xin Xia, Shanchuan Lin, Xing Wang,
+[31] Jiaqi Li, Junshu Tang, Zhiyong Xu, Longhuang Wu, Yuan                     Xuefeng Xiao, Andy J Ma, Xiaohua Xie, and Jian-Huang
+     Zhou, Shuai Shao, Tianbao Yu, Zhiguo Cao, and Qinglin Lu.                 Lai. Adversarial distribution matching for diffusion distilla-
+     Hunyuan-gamecraft: High-dynamic interactive game video                    tion towards efficient image and video synthesis. In ICCV,
+     generation with hybrid history condition. arXiv preprint                  pages 16818–16829, 2025. 3
+     arXiv:2506.17201, 2025. 2, 3, 7                                      [46] Xiaofeng Mao, Shaoheng Lin, Zhen Li, Chuanhao Li, Wen-
+[32] Runjia Li, Philip Torr, Andrea Vedaldi, and Tomas Jakab.                  shuo Peng, Tong He, Jiangmiao Pang, Mingmin Chi, Yu
+     Vmem: Consistent interactive video scene generation with                  Qiao, and Kaipeng Zhang. Yume: An interactive world gen-
+     surfel-indexed view memory. In ICCV, 2025. 2, 3, 7                        eration model. arXiv preprint arXiv:2507.17744, 2025. 2
+[33] Ruilong Li, Brent Yi, Junchen Liu, Hang Gao, Yi Ma, and              [47] Minimax.       Hailuo video model, 2024.        https : / /
+     Angjoo Kanazawa. Cameras as relative positional encoding.                 hailuoai.video. 2
+     arXiv preprint arXiv:2507.10496, 2025. 2, 4                          [48] Takeru Miyato, Bernhard Jaeger, Max Welling, and Andreas
+[34] Shenggui Li, Fuzhao Xue, Chaitanya Baranwal, Yongbin Li,                  Geiger. Gta: A geometry-aware attention mechanism for
+     and Yang You. Sequence parallelism: Long sequence train-                  multi-view transformers. In ICLR, 2024. 2
+     ing from system perspective. In Proceedings of the 61st An-          [49] Jack Parker-Holder, Philip Ball, Jake Bruce, Vibhavari
+     nual Meeting of the Association for Computational Linguis-                Dasagi, Kristian Holsheimer, Christos Kaplanis, Alexandre
+     tics (Volume 1: Long Papers), pages 2391–2404, Toronto,                   Moufarek, Guy Scully, Jeremy Shar, Jimmy Shi, Stephen
+     Canada, 2023. Association for Computational Linguistics. 6                Spencer, Jessica Yung, Michael Dennis, Sultan Kenjeyev,
+[35] Xinyang Li, Tengfei Wang, Zixiao Gu, Shengchuan Zhang,                    Shangbang Long, Vlad Mnih, Harris Chan, Maxime Gazeau,
+     Chunchao Guo, and Liujuan Cao. Flashworld: High-                          Bonnie Li, Fabio Pardo, Luyu Wang, Lei Zhang, Fred-
+     quality 3d scene generation within seconds. arXiv preprint                eric Besse, Tim Harley, Anna Mitenkova, Jane Wang, Jeff
+     arXiv:2510.13678, 2025. 3                                                 Clune, Demis Hassabis, Raia Hadsell, Adrian Bolton, Satin-
+[36] Zhen Li, Chuanhao Li, Xiaofeng Mao, Shaoheng Lin, Ming                    der Singh, and Tim Rocktäschel. Genie 2: A large-scale
+     Li, Shitian Zhao, Zhaopan Xu, Xinyue Li, Yukang Feng,                     foundation world model. 2024. 2
+     Jianwen Sun, et al. Sekai: A video dataset towards world             [50] William Peebles and Saining Xie. Scalable diffusion models
+     exploration. arXiv preprint arXiv:2506.15675, 2025. 7, 2                  with transformers. In ICCV, pages 4195–4205, 2023. 2, 3
+[37] Shanchuan Lin, Anran Wang, and Xiao Yang. Sdxl-                      [51] Joseph Redmon, Santosh Divvala, Ross Girshick, and Ali
+     lightning: Progressive adversarial diffusion distillation.                Farhadi. You only look once: Unified, real-time object de-
+     arXiv preprint arXiv:2402.13929, 2024. 3                                  tection. In Proceedings of the IEEE Conference on Computer
+[38] Shanchuan Lin, Xin Xia, Yuxi Ren, Ceyuan Yang, Xuefeng                    Vision and Pattern Recognition (CVPR), 2016. 2
+     Xiao, and Lu Jiang. Diffusion adversarial post-training for          [52] Xuanchi Ren, Tianchang Shen, Jiahui Huang, Huan Ling,
+     one-step video generation. 2025.                                          Yifan Lu, Merlin Nimier-David, Thomas Müller, Alexan-
+[39] Shanchuan Lin, Ceyuan Yang, Hao He, Jianwen Jiang, Yuxi                   der Keller, Sanja Fidler, and Jun Gao. Gen3c: 3d-informed
+     Ren, Xin Xia, Yang Zhao, Xuefeng Xiao, and Lu Jiang.                      world-consistent video generation with precise camera con-
+     Autoregressive adversarial post-training for real-time inter-             trol. In CVPR, pages 6121–6132, 2025. 2, 7
+     active video generation. arXiv preprint arXiv:2506.09350,            [53] Robin Rombach, Andreas Blattmann, Dominik Lorenz,
+     2025. 3                                                                   Patrick Esser, and Björn Ommer. High-resolution image syn-
+[40] Lu Ling, Yichen Sheng, Zhi Tu, Wentian Zhao, Cheng Xin,                   thesis with latent diffusion models. In CVPR, pages 10684–
+     Kun Wan, Lantao Yu, Qianyu Guo, Zixun Yu, Yawen Lu,                       10695, 2022. 2
+     et al. Dl3dv-10k: A large-scale scene dataset for deep               [54] Tim Salimans and Jonathan Ho. Progressive distillation
+     learning-based 3d vision. In CVPR, pages 22160–22169,                     for fast sampling of diffusion models. arXiv preprint
+     2024. 7, 2                                                                arXiv:2202.00512, 2022. 3
+
+
+                                                                     10
+[55] Axel Sauer, Frederic Boesel, Tim Dockhorn, Andreas                         long video generation. arXiv preprint arXiv:2509.22622,
+     Blattmann, Patrick Esser, and Robin Rombach. Fast high-                    2025. 5, 8, 6
+     resolution image synthesis with latent adversarial diffusion          [69] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu
+     distillation. In SIGGRAPH Asia, pages 1–11, 2024. 3                        Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiao-
+[56] Axel Sauer, Dominik Lorenz, Andreas Blattmann, and Robin                   han Zhang, Guanyu Feng, et al. Cogvideox: Text-to-video
+     Rombach. Adversarial diffusion distillation. In ECCV, pages                diffusion models with an expert transformer. In ICLR, 2024.
+     87–103. Springer, 2024. 3                                                  2
+[57] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Ab-              [70] Tianwei Yin, Michaël Gharbi, Taesung Park, Richard Zhang,
+     hishek Kumar, Stefano Ermon, and Ben Poole. Score-based                    Eli Shechtman, Fredo Durand, and Bill Freeman. Im-
+     generative modeling through stochastic differential equa-                  proved distribution matching distillation for fast image syn-
+     tions. In ICLR, 2021. 2                                                    thesis. Advances in neural information processing systems,
+[58] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen                      37:47455–47487, 2024. 2, 3, 5
+     Bo, and Yunfeng Liu. Roformer: Enhanced transformer with              [71] Tianwei Yin, Michaël Gharbi, Richard Zhang, Eli Shecht-
+     rotary position embedding. Neurocomputing, 568:127063,                     man, Fredo Durand, William T Freeman, and Taesung Park.
+     2024. 2, 4, 5                                                              One-step diffusion with distribution matching distillation. In
+[59] Wenqiang Sun, Shuo Chen, Fangfu Liu, Zilong Chen, Yueqi                    CVPR, pages 6613–6623, 2024. 3
+     Duan, Jun Zhang, and Yikai Wang. Dimensionx: Create any               [72] Tianwei Yin, Qiang Zhang, Richard Zhang, William T Free-
+     3d and 4d scenes from a single image with controllable video               man, Fredo Durand, Eli Shechtman, and Xun Huang. From
+     diffusion. arXiv preprint arXiv:2411.04928, 2024. 2                        slow bidirectional to fast autoregressive video diffusion mod-
+[60] Wenqiang Sun, Fangyun Wei, Jinjing Zhao, Xi Chen, Zi-                      els. In CVPR, pages 22963–22974, 2025. 3, 5
+     long Chen, Hongyang Zhang, Jun Zhang, and Yan Lu.                     [73] Hong-Xing Yu, Haoyi Duan, Charles Herrmann, William T
+     From virtual games to real-world play. arXiv preprint                      Freeman, and Jiajun Wu. Wonderworld: Interactive 3d scene
+     arXiv:2506.18901, 2025.                                                    generation from a single image. In CVPR, pages 5916–5926,
+[61] Dani Valevski, Yaniv Leviathan, Moab Arar, and Shlomi                      2025. 2
+     Fruchter. Diffusion models are real-time game engines. In             [74] Jiwen Yu, Jianhong Bai, Yiran Qin, Quande Liu, Xintao
+     ICLR, 2025. 2                                                              Wang, Pengfei Wan, Di Zhang, and Xihui Liu. Context as
+[62] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao,                        memory: Scene-consistent interactive long video generation
+     Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao                    with memory retrieval. arXiv preprint arXiv:2506.03141,
+     Yang, et al. Wan: Open and advanced large-scale video gen-                 2025. 2, 3, 4, 5, 8
+     erative models. arXiv preprint arXiv:2503.20314, 2025. 2,
+                                                                           [75] Jiwen Yu, Yiran Qin, Xintao Wang, Pengfei Wan, Di Zhang,
+     3, 1
+                                                                                and Xihui Liu. Gamefactory: Creating new games with gen-
+[63] Zhengyi Wang, Cheng Lu, Yikai Wang, Fan Bao, Chongxuan                     erative interactive videos. In ICCV, 2025. 2
+     Li, Hang Su, and Jun Zhu. Prolificdreamer: High-fidelity and
+                                                                           [76] Mark YU, Wenbo Hu, Jinbo Xing, and Ying Shan. Tra-
+     diverse text-to-3d generation with variational score distilla-
+                                                                                jectorycrafter: Redirecting camera trajectory for monocular
+     tion. Advances in neural information processing systems, 36:
+                                                                                videos via diffusion models. In ICCV, 2025. 2
+     8406–8441, 2023. 3
+                                                                           [77] Wangbo Yu, Jinbo Xing, Li Yuan, Wenbo Hu, Xiaoyu Li,
+[64] Zhouxia Wang, Ziyang Yuan, Xintao Wang, Yaowei Li,
+                                                                                Zhipeng Huang, Xiangjun Gao, Tien-Tsin Wong, Ying Shan,
+     Tianshui Chen, Menghan Xia, Ping Luo, and Ying Shan.
+                                                                                and Yonghong Tian. Viewcrafter: Taming video diffusion
+     Motionctrl: A unified and flexible motion controller for
+                                                                                models for high-fidelity novel view synthesis. arXiv preprint
+     video generation. In ACM SIGGRAPH, pages 1–11, 2024.
+                                                                                arXiv:2409.02048, 2024. 2, 7
+     2, 7
+[65] Thaddäus Wiedemer, Yuxuan Li, Paul Vicol, Shixiang Shane             [78] Haiyu Zhang, Xinyuan Chen, Yaohui Wang, Xihui Liu,
+     Gu, Nick Matarese, Kevin Swersky, Been Kim, Priyank                        Yunhong Wang, and Yu Qiao. Accvideo: Accelerating
+     Jaini, and Robert Geirhos. Video models are zero-shot learn-               video diffusion model with synthetic dataset. arXiv preprint
+     ers and reasoners. arXiv preprint arXiv:2509.20328, 2025.                  arXiv:2503.19462, 2025. 3
+     2                                                                     [79] Jintao Zhang, Jia Wei, Pengle Zhang, Jun Zhu, and Jianfei
+[66] Jay Zhangjie Wu, Yuxuan Zhang, Haithem Turki, Xuanchi                      Chen. Sageattention: Accurate 8-bit attention for plug-and-
+     Ren, Jun Gao, Mike Zheng Shou, Sanja Fidler, Zan Goj-                      play inference acceleration. In ICLR, 2025. 6
+     cic, and Huan Ling. Difix3d+: Improving 3d reconstructions            [80] Jensen Zhou, Hang Gao, Vikram Voleti, Aaryaman Vasishta,
+     with single-step diffusion models. In CVPR, pages 26024–                   Chun-Han Yao, Mark Boss, Philip Torr, Christian Rup-
+     26035, 2025. 7, 2                                                          precht, and Varun Jampani. Stable virtual camera: Gener-
+[67] Zeqi Xiao, Yushi Lan, Yifan Zhou, Wenqi Ouyang, Shuai                      ative view synthesis with diffusion models. arXiv preprint
+     Yang, Yanhong Zeng, and Xingang Pan. Worldmem: Long-                       arXiv:2503.14489, 2025. 7
+     term consistent world simulation with memory. arXiv                   [81] Jinguo Zhu, Weiyun Wang, Zhe Chen, Zhaoyang Liu, Shen-
+     preprint arXiv:2504.12369, 2025. 2, 3, 4, 5                                glong Ye, Lixin Gu, Hao Tian, Yuchen Duan, Weijie Su,
+[68] Shuai Yang, Wei Huang, Ruihang Chu, Yicheng Xiao,                          Jie Shao, et al. Internvl3: Exploring advanced training and
+     Yuyang Zhao, Xianbang Wang, Muyang Li, Enze Xie, Ying-                     test-time recipes for open-source multimodal models. arXiv
+     cong Chen, Yao Lu, et al. Longlive: Real-time interactive                  preprint arXiv:2504.10479, 2025. 7
+
+
+                                                                      11
+        WorldPlay: Towards Long-Term Geometric Consistency for Real-Time
+                           Interactive World Modeling
+                                                Supplementary Material
+A. Training and Inference Details                                      Algorithm 1 Context Forcing Training
+                                                                       Require: Number of denoising timesteps d and chunks n = 4
+We adopt the pretrained DiT-based video diffusion mod-                 Require: Dataset D (encoded by 3D VAE)
+els [28, 62] as the backbone. For the chunk-wise autore-               Require: AR diffusion model Nθ
+gressive diffusion transformer, we group 4 latents into a              Require: Bidirectional diffusion model Vβf ake and V real
+chunk. For the memory context, we set the temporal mem-                 1: loop
+ory length to 3 chunks and the spatial memory length to                 2:    Progressively increase maximum chunk length m
+1 chunk. For the bidirectional teacher model Vβ , we also               3:    Sample chunk length j ∼ Uniform(0, 1, . . . , m)
+                                                                        4:    Sample context x0:j−1 ∼ D
+adopt the dual-action representation and construct the mem-
+                                                                        5:    for i = j, . . . , j + n − 1 do
+ory context as described in Sec.3.4. The training consists of
+                                                                        6:         Initialize xinit
+                                                                                                 i   ∼ N (0, I)
+three stages.                                                           7:         Reconstitute context memory Ci ⊆ {x0 , . . . , xi−1 }
+Stage One: Action Control. In the first stage, we focus on              8:         Sample s ∼ Uniform(1, 2, . . . , d)
+injecting action control into the pretrained model. We em-              9:         Self-rollout xi using Nθ with Ci and s denoising steps
+ploy the dual action representation to the pretrained model            10:    end for
+                                                                       11:    Align context memory C tea ← Cj:j+n−1 − xj:j+n−1
+and train the bidirectional action model for 30K iterations.
+                                                                       12:    Sample diffusion timestep k ∼ [0, 1]
+Then, we replace the 3D self-attention with block causal at-
+                                                                       13:    x̂j:j+n−1 ← AddNoise(xj:j+n−1 , k)
+tention and train for an additional 30K iterations as our AR           14:    Compute fake score S f ake ← Vβf ake (x̂j:j+n−1 , C tea , k)
+action model. We find that this enables the AR action model            15:    Compute real score S f ake ← V real (x̂j:j+n−1 , C tea , k)
+to converge more easily. In this stage, the model is trained           16:    Update θ via distribution matching loss
+on 61 frames (4 chunks) using the Adam optimizer with a                17:    Update β via flow matching loss as in [21]
+learning rate of 1e − 5 and a batch size of 64.                        18: end loop
+Stage Two: Memory. In the second stage, we train the bidi-
+rectional action model and the AR action model with con-               Algorithm 2 Inference with KV Cache
+text memory as described in Sec.3.3 and Sec.3.4, respec-
+                                                                       Require: Number of inference chunks nc
+tively. The training is performed on longer videos, while              Require: Denoise timesteps {k1 , . . . , kd }
+other settings remain the same as in the first stage.                  Require: Number of inference chunks nc
+Stage Three: Context Forcing. In the final stage, we use               Require: AR diffusion model Nθ (returns KV embeddings via
+the bidirectional model as the teacher and the AR model as                 NθKV )
+                                                                        1: Initialize model output Xθ ← []
+the student for distillation. To stabilize the distillation pro-
+                                                                        2: Initialize KV cache KV ← []
+cess, we employ a progressive training strategy that gradu-
+                                                                        3: for i = 0, . . . , nc − 1 do
+ally increases the maximum length of the generated latents.             4:     Initialize xi ∼ N (0, I)
+For the student model, the learning rate is set to 1e − 6,              5:     Reconstitute context memory Ci ⊆ {x0 , . . . , xi−1 }
+while for the bidirectional model, which is used to compute             6:     for s = d, . . . , 1 do
+the fake score, the learning rate is set to 2e − 7. The mod-            7:          if s = d and i > 1 then
+els are trained for 2K iteration with a batch size of 64. All           8:               Reset KV ← NθKV (Ci , 0)
+other hyperparameters follow [21]. For the details of con-              9:          end if
+text forcing, see Algorithm 1.                                         10:          Denoise xi ← Nθ (xi , KV, ks )
+                                                                       11:     end for
+   Finally, our AR model can produce multiple chunks in a              12:     Add output Xθ .append(xi )
+streaming fashion with KV cache as shown in Algorithm 2.               13: end for
+When the user provides only camera poses, we first com-                14: return Xθ
+pute the relative translations and rotations between consec-
+utive poses, and then apply a thresholding mechanism to
+identify and convert them into discrete actions. Conversely,           B. Dataset
+when only discrete actions are available, we use the prede-
+fined relative translations and rotations associated with each         Table 5 provides a comprehensive breakdown of our
+action to convert them into camera poses.                              dataset. We deliberately curate a diverse and high-quality
+
+
+                                                                   1
+     Category                             Data Source               Annotation (discrete, continuous)           # Clips        Ratios
+     Real-World Dynamics                   Sekai [36]                             (✗, ✗)                          40K          12.5%
+     Real-World 3D Scene                  DL3DV [40]                             (✔, ✔)                           60K         18.75%
+     Synthetic 3D Scene                  UE Rendering                             (✗, ✔)                          50K         15.625%
+     Simulation Dynamics             Game Video Recordings                        (✔, ✗)                         170K         53.125%
+
+Table 5. Data organization. The table details the four categories of data, their sources, the availability of action annotations (discrete and
+continuous), the number of clips, and their corresponding ratio in the final dataset.
+
+
+
+
+                                   Figure 10. Camera trajectories included in our collected dataset.
+
+
+collection, encompassing data from the simulation engine                      We segment the original long videos into 30 to 40 sec-
+and real world, as well as static and dynamic environments,               onds clips and employ a vision-language model to produce
+to guarantee the strong generalization of our model.                      descriptive text annotations for every clip. Subsequently,
+    For Real-World Dynamics, we employ the Sekai                          we leverage VIPE [20] to generate high-quality camera
+dataset [36]. However, the original videos often suffer from              poses for clips without camera annotations. However, given
+scene clutter and high dynamics. To address these issues,                 the long duration and high scene diversity of our dataset, we
+we implement a rigorous filtering pipeline. Specifically, we              observe that pose estimation could be inaccurate, i.e., pose
+apply a state-of-the-art object detection model (YOLO [51])               collapse. Therefore, we filter out videos whose adjacent
+to identify the presence of crowds and vehicles. By setting               frames exhibit erratic camera positions or rotation angles.
+an empirical threshold, we filter out clips with high densi-              Finally, for clips lacking discrete action annotations, we de-
+ties of moving objects, thereby ensuring annotation accu-                 rive them from the continuous camera poses: we project
+racy and stable training.                                                 the rotation and translation components onto the x, y, z axes
+    Regarding the Real-World 3D Scene data (DL3DV [40]),                  and apply a threshold to map these continuous values into
+the original videos lack diversity in camera movement                     corresponding discrete action states.
+speed and trajectory complexity. To overcome this, we im-                     Fig. 10 illustrates the camera trajectories. Our dataset
+plement a sophisticated processing workflow: 3D Scene                     contains complex and diverse trajectories, including a large
+Reconstruction → Customized Trajectory Rendering → Vi-                    number of revisit trajectories, which enables our model to
+sual Quality Filtering → Video Repair Post-processing (us-                learn precise action control and long-term geometric con-
+ing Difix3D+ [66]). This procedure yields additional 60K                  sistency.
+high-quality real video clips featuring balanced movement
+speed. During the customized trajectory rendering stage,                  C. Additional Experimental Results
+we deliberately design diverse revisit trajectories to facili-
+tate the learning of long-term geometric consistency. The                 C.1. More Qualitative Results
+discrete actions and continuous camera poses in these ren-                Fig. 11 illustrates the results of WorldPlay under various ac-
+dered data are highly accurate, which helps the model learn               tions and virtual environments. As shown in the first three
+well-structured action patterns.                                          rows, we can interact with complex composite actions, e.g.,
+    For Synthetic 3D Scene (UE Rendering) data, we col-                   various combinations of movements. Moreover, WorldPlay
+lect hundreds of UE scenes and obtain 50K video clips by                  can follow intricate trajectories, such as complex rotations
+rendering complex, customized trajectories. For Simulation                and alternating sequences of rotations and movements as
+Dynamics (Game Video Recordings), we establish a dedi-                    demonstrated in the middle six rows. This enhanced con-
+cated game recording platform and invite players to record                trol capability is enabled by our dual action representation,
+170K video clips from 1st/3rd-person AAA games.                           which allows for more precise and reliable action guidance.
+
+
+                                                                      2
+                                               Figure 11. More qualitative results.
+
+
+Furthermore, WorldPlay exhibits strong generalization, en-           C.2. Long Video Generation
+abling it to control different types of agents, e.g., human or
+animals, to roam within the scenes as shown in the last two          Fig. 12 presents long video generation results from World-
+rows. For more intuitive perspectives, please refer to the           Play, we maintain long-term consistency, e.g., frame 1 and
+supplementary videos.                                                frame 252 in the top two examples, and preserve high vi-
+                                                                     sual quality throughout the entire sequence. Moreover, our
+
+
+                                                                 3
+Figure 12. Long video generation.
+
+
+
+
+               4
+a) Student (AR)
+
+
+                                                                                              Spa.            Tem.            PSNR↑               SSIM↑                    LPIPS↓                 Rdist ↓            Tdist ↓
+                                                                                                  3              1              16.41               0.418                       0.502              0.634             1.054
+b) Teacher (Bidirectional)                                                                        1              3              16.27               0.425                       0.495              0.611             0.991
+
+                                                                                       Table 7. Ablation for memory size. Spa. and Tem. denote the
+c) Final (Distilled)                                                                   number of chunks in spatial memory and temporal memory, re-
+                                                                                       spectively.
+
+                                                                                                                  VBench metrics and comparison with previous state-of-the-art methods.                                  Ours
+                                                                                                                                                                                                                         Gen3C
+                                                                                                                                           Dynamic Degree                                                                ViewCrafter
+Figure 13. Visualization of different models under context forcing.                                                      Aesthetic Quality                         Color                                                 GameCraft
+                                                                                                                                                                                                                         Matrix-Game-2.0
+
+                                                                                                          Imaging Quality                                                               Temporal Flickering
+                                                                                                                                                                           80
+                                NFE   PSNR↑   SSIM↑   LPIPS↓   Rdist ↓   Tdist ↓
+      Student (AR)              100   16.27   0.425    0.495   0.611     0.991                                                                                        60
+      Teacher (Bidirectional)   100   19.31   0.599    0.383   0.209     0.717                                                                                                                          Spatial Relationship
+                                                                                              Object Class
+      Final (Distilled)          4    18.94   0.585    0.371   0.332     0.797                                                                                   40
+
+
+Table 6. Comparison of Models under Context Forcing. The                                                                                                    20
+
+results are evaluated on the long-term test data. Student (AR)                         Multiple Objects                                                                                                       Subject Consistency
+denotes the AR model before distillation, Teacher (bidirectional)
+refers to the memory-augmented bidirectional video diffusion
+model, and Final (distilled) represents the AR model after distilla-
+                                                                                             Human Action                                                                                              Overall Consistency
+tion. NFE denotes the number of function evaluations.
+
+                                                                                                      Motion Smoothness                                                                      Temporal Style
+context memory ensures that the generation time for each
+chunk remains constant and does not increase as the video                                                               Background Consistency      Scene             Appearance Style
+
+length grows, enabling real-time interactivity and enhanc-
+                                                                                                                            Figure 14. VBench evaluation.
+ing the user’s immersive experience.
+
+C.3. Comparison of Models under Context Forcing                                                                                 Preference Study Results
+
+We provide a comprehensive comparison of different mod-                                Ours                                               88.5%                                                      11.5% GameCraft
+els under context forcing in Table 6 and Fig. 13. The teacher
+model exhibits better control capability and visual qual-                              Ours                                         78.4%                                                       21.6%            Matrix-Game-2.0
+ity due to the bidirectional nature, which provides reliable
+                                                                                       Ours                                                 92.1%                                                       7.9% ViewCrafter
+guidance during distillation. However, this limits its real-
+time interactivity. Through context forcing, we mitigate
+                                                                                       Ours                                       72.9%                                                      27.1%               Gen3C
+error accumulation while maintaining and even surpassing
+long-term consistency of the student model, yielding im-                               Ours                          48.1%                                                      51.9%                            Teacher
+                                                                                                                                                                                                                  (Bidirectional)
+proved overall performance. In addition, context forcing
+                                                                                              0                    20                  40                        60                     80                    100
+reduces the student model’s inference steps, enabling real-                                                                          Preference Rate (%)
+time interaction.
+                                                                                                                            Figure 15. Human evaluation.
+C.4. Ablation for Memory Size
+Table 7 evaluates the effect of different memory sizes. Us-
+                                                                                       tion to generate long-horizon videos. The results presented
+ing a larger spatial memory size leads to slightly better
+                                                                                       in Fig. 14 demonstrate the superior performance of World-
+PSNR metric, while a larger temporal memory size better
+                                                                                       Play. Notably, our method achieves outstanding results in
+preserves the pretrained model’s temporal continuity, result-
+                                                                                       key aspects such as consistency, motion smoothness, and
+ing in better overall performance. Moreover, a larger spatial
+                                                                                       scene generalizability.
+memory size may significantly increase the teacher model’s
+memory size, as the spatial memory of adjacent chunks may
+completely differ, while their temporal memory overlaps.
+                                                                                       D. User Study
+This not only increases the difficulty of training the teacher                         We conduct a comprehensive user study across multiple di-
+model but also poses challenges for distillation.                                      mensions, including visual quality, control accuracy, and
+                                                                                       long-term consistency. In our setup, users are presented
+C.5. Evaluation on VBench                                                              with two videos, generated from the same initial image and
+We evaluate our model on VBench [22] across diverse met-                               action inputs, and asked to select their preference based
+rics. For each baseline, we provide the same image and ac-                             on the specified criteria. To ensure the robustness of our
+
+
+                                                                                   5
+ Promptable Event
+                                                                     Sky Darkens                                  Flame Erupts
+
+
+
+
+                                               S                         S                      S                    S                  S
+
+                                                                     Traveler Walks                               Dog Roams
+
+
+
+
+                                               W                        W                      W                    W                   W
+
+
+
+ Video Continuation
+
+
+
+
+                                    Figure 16. Visualization of promptable event and video continuation.
+
+
+                               Point Cloud
+                                                                               which is essential for reliable 3D reconstruction. This is
+                                                                               further validated by the consistency and compactness in
+                                                                 S
+                                                                               the reconstructed point clouds. By generating diverse 3D
+                                                                               scenes, this provides the potential to augment the scarce 3D
+                                                                               datasets.
+                    S                                            S
+
+                                                                               E.2. Promptable Event
+                                                                               Due to the autoregressive nature of WorldPlay, we can mod-
+                                                                 W
+                                                                               ify the text prompt at any time to control the subsequent
+                                                                               generated content. Specifically, inspired by LongLive [68],
+                                                                               we employ a KV-recache technique to refresh the cached
+                                                                 W
+                    A
+                                                                               key–value states whenever the text prompt is modified. This
+                                                                               effectively erases residual information from the previous
+               Figure 17. 3D reconstruction results.
+                                                                               prompt while preserving the motion and visual cues neces-
+                                                                               sary to maintain temporal continuity. As shown in the upper
+evaluation, we select 300 cases from diverse benchmarks                        part of Fig. 16, we can change the weather and trigger a fire
+such as VBench [22] and WorldScore [11], and 300 cus-                          eruption, or introduce new objects and characters. Through
+tomized trajectories. The final results are then evaluated by                  promptable event, we can generate various complex and un-
+a panel of 30 assessors. As shown in Fig. 15, compared to                      common scenarios, which can benefit agent learning by en-
+other baselines, our distilled model achieves superior gener-                  abling agents to handle these unexpected situations.
+ation quality across all aforementioned evaluation metrics,
+                                                                               E.3. Video Continuation
+clearly demonstrating our model’s capability for both real-
+time interaction and long-term consistency.                                    As shown at the bottom of Fig. 16, WorldPlay can gener-
+                                                                               ate follow-up content that remains highly consistent with
+E. Additional Applications                                                     a given initial video clip in terms of motion, appearance,
+                                                                               and lighting. This enables stable video continuation, effec-
+E.1. 3D Reconstruction                                                         tively extending the original video while preserving spatial-
+Fig. 17 presents additional 3D reconstruction results. With                    temporal consistency and content coherence, which opens
+our reconstituted context memory, we maintain temporal                         up new possibilities in creative video generation and virtual
+consistency and ensure long-term geometric consistency,                        environment construction.
+
+
+                                                                        6
+F. Limitations
+While WorldPlay demonstrates strong performance, ex-
+tending the framework to generate videos with longer dura-
+tions, multi-agent interactions, and more complex physical
+dynamics still requires further investigation. Moreover, Ex-
+panding the action types to a broader set is another promis-
+ing direction. These challenges remain open for future re-
+search.
+
+
+
+
+                                                               7
+

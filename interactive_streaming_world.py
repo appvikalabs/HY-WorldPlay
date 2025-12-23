@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HY-WorldPlay - True Streaming Interactive Demo (no re-encode degradation)
+vMonad - Interactive World Streaming Demo
 
 Why this exists
 ---------------
@@ -38,8 +38,12 @@ import time
 import threading
 import queue
 import traceback
+import json
+import shutil
+from datetime import datetime
+from pathlib import Path
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -75,6 +79,12 @@ NUM_INFERENCE_STEPS = 4  # distilled
 FLOW_SHIFT = 5.0
 SEED = 42
 
+# Camera control (bigger = faster exploration, but more blur in newly revealed regions)
+MOVE_STEP_PRESETS = [0.03, 0.05, 0.08]
+YAW_STEP_DEG = 3.0
+PITCH_STEP_DEG = 2.0
+DEFAULT_MOVE_STEP_IDX = 1
+
 # Memory retrieval config (matches pipeline defaults)
 MEMORY_FRAMES = 20
 TEMPORAL_CONTEXT_SIZE = 12
@@ -88,6 +98,13 @@ POINTS_LOCAL_RADIUS = 8.0
 # Display config
 DISPLAY_SCALE = 2
 FPS_PLAYBACK = 24
+
+# UI scaling: `scale` is fastest but can introduce moiré/"web" patterns when upscaling.
+# `smoothscale` is higher quality (slightly more CPU).
+USE_SMOOTHSCALE = True
+
+# Session recording (pose JSON + meta for batch re-render)
+REPETITIONS_DIR = "repetitions"
 
 # Debug prints can be noisy; set True if needed.
 DEBUG = False
@@ -246,6 +263,9 @@ def apply_prompt_injection(state: "StreamState", new_prompt: str, negative_promp
         )
 
     _cache_text_once(state)
+    # record prompt changes (if enabled)
+    if state.recorder is not None:
+        state.recorder.log_event("prompt_injection", prompt=new_prompt, negative_prompt=negative_prompt)
 
 
 # -----------------------------
@@ -313,13 +333,159 @@ def normalized_K(width: int, height: int) -> np.ndarray:
     return np.array([[fx, 0.0, 0.5], [0.0, fy, 0.5], [0.0, 0.0, 1.0]], dtype=np.float32)
 
 
+def unnormalized_K(width: int, height: int) -> np.ndarray:
+    """
+    Batch pose JSON (consumed by generate.py) expects *unnormalized* intrinsics with cx=width/2, cy=height/2.
+    generate.py will normalize them (fx/width, fy/height) and set cx=cy=0.5 internally.
+    """
+    fx = fy = 969.6969697
+    return np.array([[fx, 0.0, width / 2.0], [0.0, fy, height / 2.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+
+
+@dataclass
+class SegmentRecorder:
+    """
+    Records ONE interactive segment (one reference-image set + continuous camera trajectory).
+    Writes:
+      - repetitions/<segment_id>.json      (batch-compatible pose JSON for generate.py)
+      - repetitions/<segment_id>_meta.json (prompts, settings, action labels, events)
+      - repetitions/<segment_id>_img*.ext  (copies of reference images)
+    """
+
+    segment_id: str
+    created_at_iso: str
+    width: int
+    height: int
+    model_path: str
+    action_ckpt: str
+    reference_image_paths: List[str]
+    base_prompt: str
+    negative_prompt: str
+    flow_shift: float
+    seed: int
+    notes: str = ""
+
+    # trajectory: one entry per latent step
+    c2w_list: List[np.ndarray] = None
+    action_labels: List[int] = None
+    events: List[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        self.c2w_list = [] if self.c2w_list is None else self.c2w_list
+        self.action_labels = [] if self.action_labels is None else self.action_labels
+        self.events = [] if self.events is None else self.events
+
+    @staticmethod
+    def new(
+        *,
+        width: int,
+        height: int,
+        model_path: str,
+        action_ckpt: str,
+        reference_image_paths: List[str],
+        base_prompt: str,
+        negative_prompt: str,
+        flow_shift: float,
+        seed: int,
+        notes: str = "",
+    ) -> "SegmentRecorder":
+        sid = datetime.now().strftime("%Y%m%d-%H%M%S")
+        return SegmentRecorder(
+            segment_id=sid,
+            created_at_iso=datetime.now().isoformat(timespec="seconds"),
+            width=width,
+            height=height,
+            model_path=model_path,
+            action_ckpt=action_ckpt,
+            reference_image_paths=reference_image_paths,
+            base_prompt=base_prompt,
+            negative_prompt=negative_prompt,
+            flow_shift=flow_shift,
+            seed=seed,
+            notes=notes,
+        )
+
+    def log_event(self, typ: str, **data: Any) -> None:
+        self.events.append(
+            {"t": datetime.now().isoformat(timespec="seconds"), "type": typ, "data": data}
+        )
+
+    def append_step(self, c2w: np.ndarray, action_label: int) -> None:
+        self.c2w_list.append(np.array(c2w, dtype=np.float32))
+        self.action_labels.append(int(action_label))
+
+    def save(self) -> Tuple[str, str]:
+        out_dir = Path(REPETITIONS_DIR)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        copied_images: List[str] = []
+        for i, src in enumerate(self.reference_image_paths):
+            try:
+                src_path = Path(src)
+                ext = src_path.suffix if src_path.suffix else ".png"
+                dst = out_dir / f"{self.segment_id}_img{i}{ext}"
+                shutil.copyfile(src_path, dst)
+                copied_images.append(str(dst))
+            except Exception as e:
+                self.log_event("warn_image_copy_failed", index=i, src=src, error=str(e))
+
+        # Batch-compatible pose JSON for generate.py (ONLY numeric keys at top-level)
+        K_raw = unnormalized_K(self.width, self.height).tolist()
+        pose_json: Dict[str, Dict[str, Any]] = {}
+        for i, c2w in enumerate(self.c2w_list):
+            pose_json[str(i)] = {"extrinsic": c2w.tolist(), "K": K_raw}
+
+        pose_path = out_dir / f"{self.segment_id}.json"
+        with open(pose_path, "w") as f:
+            json.dump(pose_json, f, indent=2)
+
+        meta = {
+            "segment_id": self.segment_id,
+            "created_at": self.created_at_iso,
+            "width": self.width,
+            "height": self.height,
+            "model_path": self.model_path,
+            "action_ckpt": self.action_ckpt,
+            "reference_image_paths": self.reference_image_paths,
+            "copied_reference_images": copied_images,
+            "base_prompt": self.base_prompt,
+            "negative_prompt": self.negative_prompt,
+            "flow_shift": self.flow_shift,
+            "seed": self.seed,
+            "num_latent_steps": len(self.c2w_list),
+            "action_labels": self.action_labels,
+            "events": self.events,
+            "notes": self.notes,
+            "batch_render_hint": {
+                "pose_json_path": str(pose_path),
+                "image_path": copied_images[0] if copied_images else (self.reference_image_paths[0] if self.reference_image_paths else None),
+                "example_generate_py": (
+                    "torchrun --nproc_per_node=1 generate.py "
+                    f"--pose_json_path {pose_path} "
+                    "--image_path <image_path> "
+                    "--prompt \"<prompt>\" "
+                    "--video_length <frames> "
+                    "--num_inference_steps <steps> "
+                    "--few_step <true|false>"
+                ),
+            },
+        }
+
+        meta_path = out_dir / f"{self.segment_id}_meta.json"
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+
+        return str(pose_path), str(meta_path)
+
 def step_camera_pose(c2w: np.ndarray, move: str, turn: Optional[str]) -> np.ndarray:
     """
     Apply one latent-step of camera movement in local frame, similar scale to test_forward pose.
     """
-    move_step = 0.08
-    yaw_step_deg = 5.0
-    pitch_step_deg = 3.5
+    # These are tuned for streaming stability; too-large steps jump into unseen regions
+    # and the model has to hallucinate/inpaint, which looks blurry.
+    move_step = MOVE_STEP_PRESETS[DEFAULT_MOVE_STEP_IDX]
+    yaw_step_deg = YAW_STEP_DEG
+    pitch_step_deg = PITCH_STEP_DEG
 
     out = c2w.copy()
 
@@ -375,6 +541,10 @@ class StreamState:
     task_type: str = "i2v"
     prompt_text: str = ""
     negative_prompt_text: str = ""
+    # Quality/speed knobs (captured once per generated chunk)
+    num_inference_steps: int = NUM_INFERENCE_STEPS
+    # Recording (optional)
+    recorder: Optional[SegmentRecorder] = None
 
     # dynamic
     c2w_list: List[np.ndarray] = None
@@ -394,6 +564,8 @@ def init_stream(
     width: int,
     height: int,
 ) -> Tuple[StreamState, np.ndarray]:
+    import time
+    t0 = time.perf_counter()
     # parallel + infer state (single GPU)
     initialize_parallel_state(sp=1)
 
@@ -406,6 +578,7 @@ def init_stream(
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+    t_pipe0 = time.perf_counter()
     pipe = HunyuanVideo_1_5_Pipeline.create_pipeline(
         pretrained_model_name_or_path=model_path,
         transformer_version="480p_i2v",
@@ -416,14 +589,23 @@ def init_stream(
         transformer_dtype=torch.bfloat16,
         action_ckpt=action_ckpt,
     )
+    t_pipe1 = time.perf_counter()
+    print(f"[startup] create_pipeline: {(t_pipe1 - t_pipe0):.2f}s")
 
-    # If the external `flash-attn` package isn't installed, force torch SDPA.
-    # This still uses PyTorch's fused Flash SDP kernels on GPU when available,
-    # and avoids repeated import-probing overhead during inference.
-    if not is_flash_available() and hasattr(pipe, "transformer") and pipe.transformer is not None:
-        pipe.transformer.set_attn_mode("torch")
+    # Use SageAttention if available (faster 8-bit attention as per paper),
+    # otherwise fall back to PyTorch SDPA.
+    if hasattr(pipe, "transformer") and pipe.transformer is not None:
+        try:
+            from sageattention import sageattn  # noqa: F401
+            pipe.transformer.set_attn_mode("sageattn")
+            print("Using SageAttention (8-bit quantized attention)")
+        except ImportError:
+            if not is_flash_available():
+                pipe.transformer.set_attn_mode("torch")
+                print("Using PyTorch SDPA (flash-attn not available)")
 
     # keep models on GPU
+    t_to0 = time.perf_counter()
     if hasattr(pipe, "transformer") and pipe.transformer is not None:
         pipe.transformer.to(device)
     if hasattr(pipe, "vae") and pipe.vae is not None:
@@ -434,6 +616,8 @@ def init_stream(
         pipe.byt5_model.to(device)
     if hasattr(pipe, "vision_encoder") and pipe.vision_encoder is not None:
         pipe.vision_encoder.to(device)
+    t_to1 = time.perf_counter()
+    print(f"[startup] move models to GPU: {(t_to1 - t_to0):.2f}s")
 
     # Default prompt strength (can be toggled at runtime with 'G' in the UI).
     pipe._guidance_scale = GUIDANCE_SCALES[0]
@@ -457,10 +641,14 @@ def init_stream(
     )
 
     # reference image
+    t_img0 = time.perf_counter()
     reference_image = Image.open(image_path).convert("RGB")
     reference_np = np.array(reference_image)
+    t_img1 = time.perf_counter()
+    print(f"[startup] load reference image: {(t_img1 - t_img0):.2f}s")
 
     # text embeddings
+    t_enc0 = time.perf_counter()
     with torch.no_grad():
         (
             prompt_embeds,
@@ -489,6 +677,8 @@ def init_stream(
         # scheduler timesteps (fixed per chunk)
         pipe.scheduler = pipe._create_scheduler(FLOW_SHIFT)
         timesteps, _ = retrieve_timesteps(pipe.scheduler, NUM_INFERENCE_STEPS, device=device)
+    t_enc1 = time.perf_counter()
+    print(f"[startup] encode prompt + vision + scheduler: {(t_enc1 - t_enc0):.2f}s")
 
     # points for memory retrieval
     points_local = generate_points_in_sphere(POINTS_LOCAL_N, POINTS_LOCAL_RADIUS).to(device)
@@ -617,7 +807,10 @@ def _append_pose_action_chunk(state: StreamState, move: str, turn: Optional[str]
         state.c2w_list.append(nxt)
         state.w2c_list.append(np.linalg.inv(nxt))
         state.K_list.append(state.K_list[0])  # constant intrinsics
-        state.action_list.append(action_label_from_keys(move, turn))
+        a = action_label_from_keys(move, turn)
+        state.action_list.append(a)
+        if state.recorder is not None:
+            state.recorder.append_step(nxt, a)
 
 
 def _stack_inputs(state: StreamState) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -634,12 +827,13 @@ def generate_next_chunk(state: StreamState, move: str, turn: Optional[str], refe
     pipe = state.pipe
     device = state.device
     do_cfg = pipe.do_classifier_free_guidance
+    steps = int(getattr(state, "num_inference_steps", NUM_INFERENCE_STEPS))
 
     # IMPORTANT: reset scheduler state for every chunk.
     # FlowMatchDiscreteScheduler increments an internal `step_index` on each `step()`.
     # Without resetting it, the 2nd call to `generate_next_chunk()` will start at the
     # end of the schedule and crash with an out-of-bounds sigma access.
-    pipe.scheduler.set_timesteps(NUM_INFERENCE_STEPS, device=device)
+    pipe.scheduler.set_timesteps(steps, device=device)
     state.timesteps = pipe.scheduler.timesteps
 
     # latent spatial sizes
@@ -895,7 +1089,7 @@ def main():
     prompt = "Photorealistic first-person view exploring a scene"
 
     print("=" * 60)
-    print("HY-WorldPlay Streaming Interactive (Paper-style state, no re-encode)")
+    print("vMonad - Interactive World Streaming")
     print("=" * 60)
     print("Loading pipeline once... (this is the slow part)")
 
@@ -916,13 +1110,16 @@ def main():
     print("  P: open prompt box (Enter=apply, Esc=cancel; prefix '=' replaces base prompt)")
     print("  I: set initial image(s) (one path or comma-separated list; Enter=apply; Esc=cancel)")
     print("  G: toggle prompt strength (CFG) for stronger prompt injection (slower)")
+    print("  Q: cycle quality (diffusion steps): 4 -> 6 -> 8 -> 12 (slower, sharper)")
+    print("  M: cycle movement speed (slower = sharper exploration)")
+    print("  V: toggle smooth display scaling (reduces moiré/web patterns)")
     print("  R: reset stream state (keeps models loaded)")
     print("  1 rain | 2 fog | 3 smoke | 0 clear (optional presets)")
     print("  ESC: quit")
 
     pygame.init()
     screen = pygame.display.set_mode((VIDEO_WIDTH * DISPLAY_SCALE, VIDEO_HEIGHT * DISPLAY_SCALE))
-    pygame.display.set_caption("HY-WorldPlay Streaming Interactive")
+    pygame.display.set_caption("vMonad")
     clock = pygame.time.Clock()
     font = pygame.font.Font(None, 28)
 
@@ -945,6 +1142,32 @@ def main():
     prompt_buffer = ""
     guidance_idx = GUIDANCE_SCALES.index(state.pipe.guidance_scale) if state.pipe.guidance_scale in GUIDANCE_SCALES else 0
     streaming_was_on = False
+    step_presets = [4, 6, 8, 12]
+    step_idx = step_presets.index(state.num_inference_steps) if state.num_inference_steps in step_presets else 0
+    move_step_idx = DEFAULT_MOVE_STEP_IDX
+    use_smoothscale = USE_SMOOTHSCALE
+
+    # -----------------------------
+    # Recording: save initial image(s) + full camera trajectory for batch re-rendering
+    # -----------------------------
+    reference_image_paths = [os.path.abspath(os.path.expanduser(p)) for p in reference_image_paths]
+    reference_image_path = reference_image_paths[0]
+    state.recorder = SegmentRecorder.new(
+        width=VIDEO_WIDTH,
+        height=VIDEO_HEIGHT,
+        model_path=model_path,
+        action_ckpt=action_ckpt,
+        reference_image_paths=reference_image_paths,
+        base_prompt=base_prompt,
+        negative_prompt=state.negative_prompt_text,
+        flow_shift=FLOW_SHIFT,
+        seed=SEED,
+        notes="Interactive capture from vMonad. Use <id>.json + <id>_img0.* to batch render with generate.py at higher steps.",
+    )
+    # record step 0
+    state.recorder.append_step(state.c2w_list[0], state.action_list[0] if state.action_list else 0)
+    state.recorder.log_event("segment_start", reason="program_start", image_paths=reference_image_paths)
+    print(f"[record] recording to {REPETITIONS_DIR}/<timestamp>.json (+ _meta.json)", flush=True)
 
     # Real-time streaming plumbing (single-GPU approximation of the report’s async buffering)
     FRAME_QUEUE_MAX = 64  # ~2.6s at 24fps
@@ -1037,6 +1260,15 @@ def main():
             _clear_frame_queue()
             streaming_enabled.clear()
 
+            # finalize current segment and start a new one (image swap = new initial condition)
+            if state.recorder is not None:
+                try:
+                    state.recorder.log_event("segment_end", reason="image_swap")
+                    pose_p, meta_p = state.recorder.save()
+                    print(f"[record] saved: {pose_p} and {meta_p}", flush=True)
+                except Exception as e:
+                    print(f"[record] save failed on image swap: {e}", flush=True)
+
             reference_image_paths = paths
             reference_image_path = paths[0]  # anchor image for i2v conditioning
             frame0 = new_frame0
@@ -1080,9 +1312,28 @@ def main():
             state.cond_latents = None
             _cache_text_once(state)
 
+            # new segment recorder (fresh initial image)
+            state.recorder = SegmentRecorder.new(
+                width=VIDEO_WIDTH,
+                height=VIDEO_HEIGHT,
+                model_path=model_path,
+                action_ckpt=action_ckpt,
+                reference_image_paths=reference_image_paths,
+                base_prompt=base_prompt,
+                negative_prompt=state.negative_prompt_text,
+                flow_shift=FLOW_SHIFT,
+                seed=SEED,
+                notes="Interactive capture from vMonad (new reference image).",
+            )
+            state.recorder.append_step(state.c2w_list[0], 0)
+            state.recorder.log_event("segment_start", reason="image_swap", image_paths=reference_image_paths)
+
         return None
 
     def _prompt_label() -> str:
+        base_snip = base_prompt.strip().replace("\n", " ")
+        if len(base_snip) > 36:
+            base_snip = base_snip[:33] + "..."
         if custom_injection_text:
             s = custom_injection_text.strip().replace("\n", " ")
             if len(s) > 48:
@@ -1090,16 +1341,21 @@ def main():
             return f"custom: {s} | cfg={state.pipe.guidance_scale:.1f}"
         if enabled_effects:
             return "effects: " + ", ".join(sorted(enabled_effects)) + f" | cfg={state.pipe.guidance_scale:.1f}"
-        return f"base | cfg={state.pipe.guidance_scale:.1f}"
+        return f"base: {base_snip} | cfg={state.pipe.guidance_scale:.1f}"
 
     def blit(frame: np.ndarray, overlay: str, input_line: Optional[str] = None):
         pygame.surfarray.blit_array(frame_surface, frame.swapaxes(0, 1))
         if DISPLAY_SCALE == 1:
             screen.blit(frame_surface, (0, 0))
         else:
-            pygame.transform.scale(
-                frame_surface, (VIDEO_WIDTH * DISPLAY_SCALE, VIDEO_HEIGHT * DISPLAY_SCALE), scaled_surface
-            )
+            if use_smoothscale:
+                pygame.transform.smoothscale(
+                    frame_surface, (VIDEO_WIDTH * DISPLAY_SCALE, VIDEO_HEIGHT * DISPLAY_SCALE), scaled_surface
+                )
+            else:
+                pygame.transform.scale(
+                    frame_surface, (VIDEO_WIDTH * DISPLAY_SCALE, VIDEO_HEIGHT * DISPLAY_SCALE), scaled_surface
+                )
             screen.blit(scaled_surface, (0, 0))
         if overlay:
             txt = font.render(overlay, True, (255, 255, 255))
@@ -1193,6 +1449,14 @@ def main():
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                # Save recording on window close
+                if state.recorder is not None:
+                    try:
+                        state.recorder.log_event("segment_end", reason="window_close")
+                        pose_p, meta_p = state.recorder.save()
+                        print(f"[record] saved: {pose_p} and {meta_p}", flush=True)
+                    except Exception as e:
+                        print(f"[record] save failed on window close: {e}", flush=True)
                 running = False
             elif event.type == pygame.KEYDOWN:
                 # Prompt input mode: capture keystrokes into a textbox.
@@ -1284,6 +1548,14 @@ def main():
                     continue
 
                 if event.key == pygame.K_ESCAPE:
+                    # Save recording on exit
+                    if state.recorder is not None:
+                        try:
+                            state.recorder.log_event("segment_end", reason="exit")
+                            pose_p, meta_p = state.recorder.save()
+                            print(f"[record] saved: {pose_p} and {meta_p}", flush=True)
+                        except Exception as e:
+                            print(f"[record] save failed on exit: {e}", flush=True)
                     running = False
                 elif event.key == pygame.K_p:
                     # Pause streaming while typing to avoid accidental movement and to apply injection cleanly.
@@ -1327,6 +1599,31 @@ def main():
                         guidance_idx = new_idx
                     blit(current_frame, f"CFG scale: {state.pipe.guidance_scale:.1f}", None)
                     blit(current_frame, f"Prompt active: {_prompt_label()}", None)
+                    if state.recorder is not None:
+                        state.recorder.log_event("toggle_cfg", guidance_scale=state.pipe.guidance_scale)
+                elif event.key == pygame.K_q:
+                    # Cycle diffusion steps for quality vs speed.
+                    # Keep this inside the GPU lock so it can't flip mid-chunk in a way that surprises the scheduler.
+                    with gpu_lock:
+                        _bump_epoch()
+                        _clear_frame_queue()
+                        step_idx = (step_idx + 1) % len(step_presets)
+                        state.num_inference_steps = step_presets[step_idx]
+                    blit(current_frame, f"Steps per chunk: {state.num_inference_steps}", None)
+                    if state.recorder is not None:
+                        state.recorder.log_event("toggle_steps", num_inference_steps=state.num_inference_steps)
+                elif event.key == pygame.K_m:
+                    # Slower movement keeps the camera closer to known regions -> less blur.
+                    move_step_idx = (move_step_idx + 1) % len(MOVE_STEP_PRESETS)
+                    globals()["DEFAULT_MOVE_STEP_IDX"] = move_step_idx
+                    blit(current_frame, f"Move step: {MOVE_STEP_PRESETS[move_step_idx]:.2f}", None)
+                    if state.recorder is not None:
+                        state.recorder.log_event("toggle_move_step", move_step=MOVE_STEP_PRESETS[move_step_idx])
+                elif event.key == pygame.K_v:
+                    use_smoothscale = not use_smoothscale
+                    blit(current_frame, f"Smoothscale: {'ON' if use_smoothscale else 'OFF'}", None)
+                    if state.recorder is not None:
+                        state.recorder.log_event("toggle_ui_smoothscale", enabled=use_smoothscale)
                 elif event.key == pygame.K_SPACE:
                     # Toggle continuous streaming
                     if streaming_enabled.is_set():
@@ -1343,6 +1640,14 @@ def main():
                         _bump_epoch()
                         _clear_frame_queue()
                         streaming_enabled.clear()
+                        # finalize current segment and start a new one (reset = new trajectory from same initial)
+                        if state.recorder is not None:
+                            try:
+                                state.recorder.log_event("segment_end", reason="reset")
+                                pose_p, meta_p = state.recorder.save()
+                                print(f"[record] saved: {pose_p} and {meta_p}", flush=True)
+                            except Exception as e:
+                                print(f"[record] save failed on reset: {e}", flush=True)
                         state.c2w_list = [np.eye(4, dtype=np.float32)]
                         state.w2c_list = [np.eye(4, dtype=np.float32)]
                         state.K_list = [normalized_K(VIDEO_WIDTH, VIDEO_HEIGHT)]
@@ -1352,6 +1657,20 @@ def main():
                         _cache_text_once(state)
                     current_frame = frame0.copy()
                     blit(current_frame, "RESET (press SPACE to resume)", None)
+                    state.recorder = SegmentRecorder.new(
+                        width=VIDEO_WIDTH,
+                        height=VIDEO_HEIGHT,
+                        model_path=model_path,
+                        action_ckpt=action_ckpt,
+                        reference_image_paths=reference_image_paths,
+                        base_prompt=base_prompt,
+                        negative_prompt=state.negative_prompt_text,
+                        flow_shift=FLOW_SHIFT,
+                        seed=SEED,
+                        notes="Interactive capture from vMonad (reset).",
+                    )
+                    state.recorder.append_step(state.c2w_list[0], 0)
+                    state.recorder.log_event("segment_start", reason="reset", image_paths=reference_image_paths)
                 elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_0):
                     # Prompt/effect injection (applied immediately, between chunks)
                     if event.key == pygame.K_0:
@@ -1395,10 +1714,13 @@ def main():
         status = "RUN" if streaming_enabled.is_set() else "PAUSE"
         qn = frame_queue.qsize()
         gen_tag = "gen..." if gen_in_progress else f"gen {last_gen_time_s:.2f}s"
+        steps_tag = f"steps={getattr(state, 'num_inference_steps', NUM_INFERENCE_STEPS)}"
+        move_tag = f"mv={MOVE_STEP_PRESETS[DEFAULT_MOVE_STEP_IDX]:.2f}"
+        scale_tag = "ui=smooth" if (DISPLAY_SCALE != 1 and use_smoothscale) else ("ui=fast" if DISPLAY_SCALE != 1 else "ui=1x")
         if last_gen_err:
-            overlay = f"{status} | {_prompt_label()} | q={qn} | ERR: {last_gen_err}"
+            overlay = f"{status} | {_prompt_label()} | {steps_tag} | {move_tag} | {scale_tag} | q={qn} | ERR: {last_gen_err}"
         else:
-            overlay = f"{status} | {_prompt_label()} | q={qn} | {gen_tag}"
+            overlay = f"{status} | {_prompt_label()} | {steps_tag} | {move_tag} | {scale_tag} | q={qn} | {gen_tag}"
         blit(current_frame, overlay, prompt_buffer if (prompt_editing or image_editing) else None)
 
         # UI tick: 24fps during playback/streaming, otherwise faster for responsiveness

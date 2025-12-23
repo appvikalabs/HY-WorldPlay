@@ -167,6 +167,36 @@ python download_models.py --hf_token <your_huggingface_token>
 ```
 
 **Important:** The vision encoder requires access to a gated model. Before running:
+
+## 🔁 vMonad Recording + Re-render (batch)
+
+When you run the interactive demo (`./run.sh`), vMonad automatically records everything needed to re-render the interaction offline at higher quality:
+
+- **Pose/trajectory JSON**: `repetitions/<timestamp>.json` (compatible with `generate.py --pose_json_path`)
+- **Metadata**: `repetitions/<timestamp>_meta.json` (prompt(s), settings, actions, events)
+- **Initial image copy**: `repetitions/<timestamp>_img0.*` (and more if multiple images were provided)
+
+### Re-render a recorded run
+
+Use `rerender.sh` to re-render the recorded trajectory at higher diffusion steps (or with different checkpoints):
+
+```bash
+./rerender.sh <timestamp> --steps 12 --few_step false
+```
+
+You can also point it at the meta json directly:
+
+```bash
+./rerender.sh repetitions/<timestamp>_meta.json --steps 30 --few_step false
+```
+
+Useful overrides:
+
+- `--prompt "..."`: override the prompt for the re-render
+- `--model_path /path/to/HunyuanVideo-1.5`
+- `--action_ckpt /path/to/ar_distilled_action_model/model.safetensors` (or another action checkpoint)
+- `--env worldplay312`: choose which conda env to use (default: `worldplay312`)
+
 1. Request access at: https://huggingface.co/black-forest-labs/FLUX.1-Redux-dev
 2. Wait for approval (usually instant)
 3. Create/get your access token at: https://huggingface.co/settings/tokens (select "Read" permission)
