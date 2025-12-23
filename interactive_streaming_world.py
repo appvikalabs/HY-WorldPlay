@@ -1113,6 +1113,7 @@ def main():
     print("  Q: cycle quality (diffusion steps): 4 -> 6 -> 8 -> 12 (slower, sharper)")
     print("  M: cycle movement speed (slower = sharper exploration)")
     print("  V: toggle smooth display scaling (reduces moiré/web patterns)")
+    print("  ?: show/hide keybind help")
     print("  R: reset stream state (keeps models loaded)")
     print("  1 rain | 2 fog | 3 smoke | 0 clear (optional presets)")
     print("  ESC: quit")
@@ -1146,6 +1147,7 @@ def main():
     step_idx = step_presets.index(state.num_inference_steps) if state.num_inference_steps in step_presets else 0
     move_step_idx = DEFAULT_MOVE_STEP_IDX
     use_smoothscale = USE_SMOOTHSCALE
+    show_help = False
 
     # -----------------------------
     # Recording: save initial image(s) + full camera trajectory for batch re-rendering
@@ -1380,9 +1382,47 @@ def main():
             bar.set_alpha(210)
             screen.blit(bar, (0, bar_y))
             screen.blit(prompt_txt, (10, bar_y + 8))
+
+        # Help overlay (toggle with '?')
+        if show_help:
+            help_lines = [
+                "vMonad Controls (? to close)",
+                "",
+                "Arrow keys: walk/strafe",
+                "WASD: look around (camera)",
+                "SPACE: start/stop continuous streaming",
+                "P: prompt box (Enter=apply, Esc=cancel; prefix '=' replaces base prompt)",
+                "I: change initial image(s) (comma-separated paths)",
+                "G: toggle CFG strength",
+                "Q: cycle diffusion steps (quality vs speed)",
+                "M: cycle movement speed (slower = sharper)",
+                "V: toggle smooth UI scaling (moiré reduction)",
+                "R: reset stream state (models stay loaded)",
+                "1 rain | 2 fog | 3 smoke | 0 clear presets",
+                "ESC: quit (auto-saves recording)",
+                "",
+                "Recording:",
+                "repetitions/<timestamp>.json + _meta.json + _img0.*",
+                "Re-render: ./rerender.sh <timestamp> --steps 12 --few_step false",
+            ]
+            pad = 14
+            line_h = font.get_linesize()
+            box_w = int(VIDEO_WIDTH * DISPLAY_SCALE * 0.78)
+            box_h = pad * 2 + line_h * len(help_lines)
+            box = pygame.Surface((box_w, box_h))
+            box.fill((0, 0, 0))
+            box.set_alpha(210)
+            x = 12
+            y = 52  # below the status overlay
+            screen.blit(box, (x, y))
+            ty = y + pad
+            for ln in help_lines:
+                txt = font.render(ln, True, (255, 255, 255))
+                screen.blit(txt, (x + pad, ty))
+                ty += line_h
         pygame.display.flip()
 
-    blit(current_frame, "Ready: SPACE=start/stop | P=prompt | G=CFG | 1/2/3 effects | 0 clear")
+    blit(current_frame, "Ready: SPACE=start/stop | P=prompt | G=CFG | ?=help | 1/2/3 effects | 0 clear")
 
     # Background generator: generates next chunks and appends frames into the queue.
     def _gen_worker():
@@ -1557,6 +1597,11 @@ def main():
                         except Exception as e:
                             print(f"[record] save failed on exit: {e}", flush=True)
                     running = False
+                elif event.unicode == "?" or (
+                    event.key == pygame.K_SLASH and (pygame.key.get_mods() & pygame.KMOD_SHIFT)
+                ):
+                    show_help = not show_help
+                    blit(current_frame, "Help shown" if show_help else "Help hidden", None)
                 elif event.key == pygame.K_p:
                     # Pause streaming while typing to avoid accidental movement and to apply injection cleanly.
                     streaming_was_on = streaming_enabled.is_set()
