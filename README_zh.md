@@ -27,6 +27,12 @@
   <i>"一掌握无限，一瞬即永恒"</i>
 </p>
 
+## 🎥 宣传视频
+
+<p align="center">
+  <video src="https://3d-models.hunyuan.tencent.com/world/world1_5/Video/Worldplay1.5_zh.mp4" controls width="100%"></video>
+</p>
+
 ## 🔥 新闻
 - 2025年12月17日: 👋 我们发布了 HY-World 1.5 (WorldPlay) 的[技术报告](https://3d-models.hunyuan.tencent.com/world/world1_5/HYWorld_1.5_Tech_Report.pdf)和[研究论文](https://arxiv.org/abs/2512.14614)，欢迎查看详情并展开讨论！
 - 2025年12月17日: 🤗 我们发布了首个开源、实时交互、长期几何一致性的世界模型 HY-World 1.5 (WorldPlay)！

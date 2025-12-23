@@ -31,6 +31,12 @@
   <i>"Hold Infinity in the Palm of Your Hand, and Eternity in an Hour"</i>
 </p>
 
+## 🎥 Video
+
+<p align="center">
+  <video src="https://3d-models.hunyuan.tencent.com/world/world1_5/Video/Worldplay1.5_en.mp4" controls width="100%"></video>
+</p>
+
 ## 🔥 News
 - December 17, 2025: 👋 We present the [technical report](https://3d-models.hunyuan.tencent.com/world/world1_5/HYWorld_1.5_Tech_Report.pdf) and [research paper](https://arxiv.org/abs/2512.14614) of HY-World 1.5 (WorldPlay), please check out the details and spark some discussion!
 - December 17, 2025: 🤗 We release the first open-source, real-time interactive, and long-term geometric consistent world model, HY-World 1.5 (WorldPlay)!
