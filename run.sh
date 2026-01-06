@@ -8,13 +8,13 @@ PROMPT='A paved pathway leads towards a stone arch bridge spanning a calm body o
 IMAGE_PATH=./assets/img/test.png # Now we only provide the i2v model, so the path cannot be None
 SEED=1
 ASPECT_RATIO=16:9
-RESOLUTION=480p                  # Now we only provide the 480p model
+RESOLUTION=480p # Now we only provide the 480p model
 OUTPUT_PATH=./outputs/
-MODEL_PATH=                      # Path to pretrained hunyuanvideo-1.5 model
-AR_ACTION_MODEL_PATH=            # Path to our HY-World 1.5 autoregressive checkpoints
-BI_ACTION_MODEL_PATH=            # Path to our HY-World 1.5 bidirectional checkpoints
-AR_DISTILL_ACTION_MODEL_PATH=    # Path to our HY-World 1.5 autoregressive distilled checkpoints
-POSE_JSON_PATH=./assets/pose/test_forward_32_latents.json   # Path to the customized camera trajectory
+MODEL_PATH=                   # Path to pretrained hunyuanvideo-1.5 model
+AR_ACTION_MODEL_PATH=         # Path to our HY-World 1.5 autoregressive checkpoints
+BI_ACTION_MODEL_PATH=         # Path to our HY-World 1.5 bidirectional checkpoints
+AR_DISTILL_ACTION_MODEL_PATH= # Path to our HY-World 1.5 autoregressive distilled checkpoints
+POSE='w-31'                   # Camera trajectory: pose string (e.g., 'w-31' means generating [1 + 31] latents) or JSON file path
 NUM_FRAMES=125
 WIDTH=832
 HEIGHT=480
@@ -24,11 +24,47 @@ HEIGHT=480
 N_INFERENCE_GPU=8 # Parallel inference GPU count.
 
 # Configuration for better quality
-REWRITE=false # Enable prompt rewriting. Please ensure rewrite vLLM server is deployed and configured.
-ENABLE_SR=false # Enable super resolution. When the NUM_FRAMES <= 121, you can set it to true
+REWRITE=false   # Enable prompt rewriting. Please ensure rewrite vLLM server is deployed and configured.
+ENABLE_SR=false # Enable super resolution. When the NUM_FRAMES == 125, you can set it to true
 
 # inference with bidirectional model
-torchrun --nproc_per_node=$N_INFERENCE_GPU generate.py  \
+# torchrun --nproc_per_node=$N_INFERENCE_GPU hyvideo/generate.py  \
+#   --prompt "$PROMPT" \
+#   --image_path $IMAGE_PATH \
+#   --resolution $RESOLUTION \
+#   --aspect_ratio $ASPECT_RATIO \
+#   --video_length $NUM_FRAMES \
+#   --seed $SEED \
+#   --rewrite $REWRITE \
+#   --sr $ENABLE_SR --save_pre_sr_video \
+#   --pose "$POSE" \
+#   --output_path $OUTPUT_PATH \
+#   --model_path $MODEL_PATH \
+#   --action_ckpt $BI_ACTION_MODEL_PATH \
+#   --few_step false \
+#   --model_type 'bi'
+
+# inference with autoregressive model
+# torchrun --nproc_per_node=$N_INFERENCE_GPU hyvideo/generate.py  \
+#   --prompt "$PROMPT" \
+#   --image_path $IMAGE_PATH \
+#   --resolution $RESOLUTION \
+#   --aspect_ratio $ASPECT_RATIO \
+#   --video_length $NUM_FRAMES \
+#   --seed $SEED \
+#   --rewrite $REWRITE \
+#   --sr $ENABLE_SR --save_pre_sr_video \
+#   --pose "$POSE" \
+#   --output_path $OUTPUT_PATH \
+#   --model_path $MODEL_PATH \
+#   --action_ckpt $AR_ACTION_MODEL_PATH \
+#   --few_step false \
+#   --width $WIDTH \
+#   --height $HEIGHT \
+#   --model_type 'ar'
+
+# inference with autoregressive distilled model
+torchrun --nproc_per_node=$N_INFERENCE_GPU hyvideo/generate.py \
   --prompt "$PROMPT" \
   --image_path $IMAGE_PATH \
   --resolution $RESOLUTION \
@@ -37,50 +73,13 @@ torchrun --nproc_per_node=$N_INFERENCE_GPU generate.py  \
   --seed $SEED \
   --rewrite $REWRITE \
   --sr $ENABLE_SR --save_pre_sr_video \
-  --pose_json_path $POSE_JSON_PATH \
+  --pose "$POSE" \
   --output_path $OUTPUT_PATH \
   --model_path $MODEL_PATH \
-  --action_ckpt $BI_ACTION_MODEL_PATH \
-  --few_step false \
-  --width $WIDTH \
-  --height $HEIGHT \
-  --model_type 'bi'
-
-# inference with autoregressive model
-#torchrun --nproc_per_node=$N_INFERENCE_GPU generate.py  \
-#  --prompt "$PROMPT" \
-#  --image_path $IMAGE_PATH \
-#  --resolution $RESOLUTION \
-#  --aspect_ratio $ASPECT_RATIO \
-#  --video_length $NUM_FRAMES \
-#  --seed $SEED \
-#  --rewrite $REWRITE \
-#  --sr $ENABLE_SR --save_pre_sr_video \
-#  --pose_json_path $POSE_JSON_PATH \
-#  --output_path $OUTPUT_PATH \
-#  --model_path $MODEL_PATH \
-#  --action_ckpt $AR_ACTION_MODEL_PATH \
-#  --few_step false \
-#  --width $WIDTH \
-#  --height $HEIGHT \
-#  --model_type 'ar'
-
-# inference with autoregressive distilled model
-#torchrun --nproc_per_node=$N_INFERENCE_GPU generate.py  \
-#  --prompt "$PROMPT" \
-#  --image_path $IMAGE_PATH \
-#  --resolution $RESOLUTION \
-#  --aspect_ratio $ASPECT_RATIO \
-#  --video_length $NUM_FRAMES \
-#  --seed $SEED \
-#  --rewrite $REWRITE \
-#  --sr $ENABLE_SR --save_pre_sr_video \
-#  --pose_json_path $POSE_JSON_PATH \
-#  --output_path $OUTPUT_PATH \
-#  --model_path $MODEL_PATH \
-#  --action_ckpt $AR_DISTILL_ACTION_MODEL_PATH \
-#  --few_step true \
-#  --num_inference_steps 4 \
-#  --width $WIDTH \
-#  --height $HEIGHT \
-#  --model_type 'ar'
+  --action_ckpt $AR_DISTILL_ACTION_MODEL_PATH \
+  --few_step true \
+  --num_inference_steps 4 \
+  --model_type 'ar' \
+  --use_vae_parallel false \
+  --use_sageattn false \
+  --use_fp8_gemm false \

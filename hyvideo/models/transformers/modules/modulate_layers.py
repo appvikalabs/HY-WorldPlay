@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
+
 class ModulateDiT(nn.Module):
     """Modulation layer for DiT."""
 
@@ -34,13 +35,16 @@ class ModulateDiT(nn.Module):
         factory_kwargs = {"dtype": dtype, "device": device}
         super().__init__()
         self.act = act_layer()
-        self.linear = nn.Linear(hidden_size, factor * hidden_size, bias=True, **factory_kwargs)
+        self.linear = nn.Linear(
+            hidden_size, factor * hidden_size, bias=True, **factory_kwargs
+        )
         # Zero-initialize the modulation
         nn.init.zeros_(self.linear.weight)
         nn.init.zeros_(self.linear.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.linear(self.act(x))
+
 
 def modulate(x, shift=None, scale=None):
     """modulate by shift and scale
@@ -57,7 +61,7 @@ def modulate(x, shift=None, scale=None):
         return x
     elif shift is None:
         scale = scale.unsqueeze(0)
-        scale = rearrange(scale, 'B (N T) C -> (B N) T C', N=x.shape[0])
+        scale = rearrange(scale, "B (N T) C -> (B N) T C", N=x.shape[0])
         latent_length = scale.shape[1]  # latent length
         token_length = x.shape[1] // latent_length
         # operate on the hidden_states
@@ -66,7 +70,7 @@ def modulate(x, shift=None, scale=None):
 
     elif scale is None:
         shift = shift.unsqueeze(0)
-        shift = rearrange(shift, 'B (N T) C -> (B N) T C', N=x.shape[0])
+        shift = rearrange(shift, "B (N T) C -> (B N) T C", N=x.shape[0])
         latent_length = shift.shape[1]  # latent length
         token_length = x.shape[1] // latent_length
         # operate on the hidden_states
@@ -76,8 +80,8 @@ def modulate(x, shift=None, scale=None):
     else:
         shift = shift.unsqueeze(0)
         scale = scale.unsqueeze(0)
-        shift = rearrange(shift, 'B (N T) C -> (B N) T C', N=x.shape[0])
-        scale = rearrange(scale, 'B (N T) C -> (B N) T C', N=x.shape[0])
+        shift = rearrange(shift, "B (N T) C -> (B N) T C", N=x.shape[0])
+        scale = rearrange(scale, "B (N T) C -> (B N) T C", N=x.shape[0])
 
         latent_length = shift.shape[1]  # latent length
         token_length = x.shape[1] // latent_length
@@ -101,7 +105,7 @@ def apply_gate(x, gate=None, tanh=False):
     if gate is None:
         return x
     gate = gate.unsqueeze(0)
-    gate = rearrange(gate, 'B (N T) C -> (B N) T C', N=x.shape[0])
+    gate = rearrange(gate, "B (N T) C -> (B N) T C", N=x.shape[0])
     latent_length = gate.shape[1]  # latent length
     token_length = x.shape[1] // latent_length
     gate = gate.repeat_interleave(token_length, dim=1).type_as(x)
@@ -110,10 +114,10 @@ def apply_gate(x, gate=None, tanh=False):
     else:
         return x * gate
 
+
 def ckpt_wrapper(module):
     def ckpt_forward(*inputs):
         outputs = module(*inputs)
         return outputs
 
     return ckpt_forward
-

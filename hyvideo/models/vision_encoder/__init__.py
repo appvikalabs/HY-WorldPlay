@@ -31,26 +31,27 @@ def use_default(value, default):
 
 
 def load_vision_encoder(
-        vision_encoder_type,
-        vision_encoder_precision=None,
-        vision_encoder_path=None,
-        logger=None,
-        device=None,
+    vision_encoder_type,
+    vision_encoder_precision=None,
+    vision_encoder_path=None,
+    logger=None,
+    device=None,
 ):
     if vision_encoder_path is None:
         vision_encoder_path = VISION_ENCODER_PATH[vision_encoder_type]
 
     if vision_encoder_type == "siglip":
         vision_encoder = SiglipVisionModel.from_pretrained(
-            vision_encoder_path,
-            subfolder='image_encoder'
+            vision_encoder_path, subfolder="image_encoder"
         )
     else:
         raise ValueError(f"Unsupported vision encoder type: {vision_encoder_type}")
 
     # from_pretrained will ensure that the model is in eval mode.
     if vision_encoder_precision is not None:
-        vision_encoder = vision_encoder.to(dtype=PRECISION_TO_TYPE[vision_encoder_precision])
+        vision_encoder = vision_encoder.to(
+            dtype=PRECISION_TO_TYPE[vision_encoder_precision]
+        )
 
     vision_encoder.requires_grad_(False)
 
@@ -60,18 +61,13 @@ def load_vision_encoder(
     return vision_encoder, vision_encoder_path
 
 
-def load_image_processor(
-        processor_type,
-        processor_path=None,
-        logger=None
-):
+def load_image_processor(processor_type, processor_path=None, logger=None):
     if processor_path is None:
         processor_path = VISION_ENCODER_PATH[processor_type]
 
     if processor_type == "siglip":
         processor = SiglipImageProcessor.from_pretrained(
-            processor_path,
-            subfolder='feature_extractor'
+            processor_path, subfolder="feature_extractor"
         )
     else:
         raise ValueError(f"Unsupported processor type: {processor_type}")
@@ -103,15 +99,15 @@ class VisionEncoderModelOutput(ModelOutput):
 
 class VisionEncoder(nn.Module):
     def __init__(
-            self,
-            vision_encoder_type: str,
-            vision_encoder_precision: Optional[str] = None,
-            vision_encoder_path: Optional[str] = None,
-            processor_type: Optional[str] = None,
-            processor_path: Optional[str] = None,
-            output_key: Optional[str] = None,
-            logger=None,
-            device=None,
+        self,
+        vision_encoder_type: str,
+        vision_encoder_precision: Optional[str] = None,
+        vision_encoder_path: Optional[str] = None,
+        processor_type: Optional[str] = None,
+        processor_path: Optional[str] = None,
+        output_key: Optional[str] = None,
+        logger=None,
+        device=None,
     ):
         super().__init__()
         self.vision_encoder_type = vision_encoder_type
@@ -161,9 +157,13 @@ class VisionEncoder(nn.Module):
             images: Decoded images as numpy array
         """
         # Handle both 4D and 5D latents (for video, take first frame)
-        first_image_latents = latents[:, :, 0, ...] if len(latents.shape) == 5 else latents
+        first_image_latents = (
+            latents[:, :, 0, ...] if len(latents.shape) == 5 else latents
+        )
         first_image_latents = 1 / vae.config.scaling_factor * first_image_latents
-        first_image = vae.decode(first_image_latents.unsqueeze(2).to(vae.dtype), return_dict=False)[0].cpu()
+        first_image = vae.decode(
+            first_image_latents.unsqueeze(2).to(vae.dtype), return_dict=False
+        )[0].cpu()
         first_image = first_image[:, :, 0, :, :]
         first_image = (first_image / 2 + 0.5).clamp(0, 1)
         first_image = (first_image * 255.0).clamp(0, 255.0)
@@ -188,8 +188,9 @@ class VisionEncoder(nn.Module):
         """
         if isinstance(images, np.ndarray):
             # Preprocess images if they're numpy arrays
-            preprocessed = self.processor.preprocess(images=images, return_tensors="pt").to(
-                device=self.model.device, dtype=self.model.dtype)
+            preprocessed = self.processor.preprocess(
+                images=images, return_tensors="pt"
+            ).to(device=self.model.device, dtype=self.model.dtype)
         else:
             # Assume already preprocessed
             preprocessed = images
@@ -198,8 +199,12 @@ class VisionEncoder(nn.Module):
 
         return VisionEncoderModelOutput(
             last_hidden_state=outputs.last_hidden_state,
-            pooler_output=outputs.pooler_output if hasattr(outputs, 'pooler_output') else None,
-            hidden_states=outputs.hidden_states if hasattr(outputs, 'hidden_states') else None
+            pooler_output=(
+                outputs.pooler_output if hasattr(outputs, "pooler_output") else None
+            ),
+            hidden_states=(
+                outputs.hidden_states if hasattr(outputs, "hidden_states") else None
+            ),
         )
 
     def encode_latents(self, latents, vae, reorg_token=False):

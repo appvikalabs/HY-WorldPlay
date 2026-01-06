@@ -93,8 +93,8 @@ class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
         flux_base_shift: float = 0.5,
         flux_max_shift: float = 1.15,
         n_tokens: Optional[int] = None,
-        flux_base_token=256.,
-        flux_max_token=4096.,
+        flux_base_token=256.0,
+        flux_max_token=4096.0,
         flux_shift_factor=1.0,
     ):
         sigmas = torch.linspace(1, 0, num_train_timesteps + 1)
@@ -109,11 +109,11 @@ class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
         self._step_index = None
         self._begin_index = None
 
-        self.supported_solver = [
-            "euler"
-        ]
+        self.supported_solver = ["euler"]
         if solver not in self.supported_solver:
-            raise ValueError(f"Solver {solver} not supported. Supported solvers: {self.supported_solver}")
+            raise ValueError(
+                f"Solver {solver} not supported. Supported solvers: {self.supported_solver}"
+            )
 
     @property
     def step_index(self):
@@ -143,8 +143,12 @@ class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
     def _sigma_to_t(self, sigma):
         return sigma * self.config.num_train_timesteps
 
-    def set_timesteps(self, num_inference_steps: int, device: Union[str, torch.device] = None,
-                      n_tokens: int = None):
+    def set_timesteps(
+        self,
+        num_inference_steps: int,
+        device: Union[str, torch.device] = None,
+        n_tokens: int = None,
+    ):
         """
         Sets the discrete timesteps used for the diffusion chain (to be run before inference).
 
@@ -162,19 +166,26 @@ class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
 
         # Apply timestep shift
         if self.config.use_flux_shift:
-            assert isinstance(n_tokens, int), "n_tokens should be provided for flux shift"
-            mu = self.get_lin_function(x1=self.config.flux_base_token, x2=self.config.flux_max_token,
-                                       y1=self.config.flux_base_shift * self.config.flux_shift_factor,
-                                       y2=self.config.flux_max_shift * self.config.flux_shift_factor)(n_tokens)
+            assert isinstance(
+                n_tokens, int
+            ), "n_tokens should be provided for flux shift"
+            mu = self.get_lin_function(
+                x1=self.config.flux_base_token,
+                x2=self.config.flux_max_token,
+                y1=self.config.flux_base_shift * self.config.flux_shift_factor,
+                y2=self.config.flux_max_shift * self.config.flux_shift_factor,
+            )(n_tokens)
             sigmas = self.flux_time_shift(mu, 1.0, sigmas)
-        elif self.config.shift != 1.:
+        elif self.config.shift != 1.0:
             sigmas = self.sd3_time_shift(sigmas)
 
         if not self.config.reverse:
             sigmas = 1 - sigmas
 
         self.sigmas = sigmas
-        self.timesteps = (sigmas[:-1] * self.config.num_train_timesteps).to(dtype=torch.float32, device=device)
+        self.timesteps = (sigmas[:-1] * self.config.num_train_timesteps).to(
+            dtype=torch.float32, device=device
+        )
 
         # Reset step index
         self._step_index = None
@@ -201,11 +212,15 @@ class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
         else:
             self._step_index = self._begin_index
 
-    def scale_model_input(self, sample: torch.Tensor, timestep: Optional[int] = None) -> torch.Tensor:
+    def scale_model_input(
+        self, sample: torch.Tensor, timestep: Optional[int] = None
+    ) -> torch.Tensor:
         return sample
 
     @staticmethod
-    def get_lin_function(x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15):
+    def get_lin_function(
+        x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15
+    ):
         m = (y2 - y1) / (x2 - x1)
         b = y1 - m * x1
         return lambda x: m * x + b
@@ -275,7 +290,9 @@ class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
         if self.config.solver == "euler":
             prev_sample = sample + model_output.float() * dt
         else:
-            raise ValueError(f"Solver {self.config.solver} not supported. Supported solvers: {self.supported_solver}")
+            raise ValueError(
+                f"Solver {self.config.solver} not supported. Supported solvers: {self.supported_solver}"
+            )
 
         # Cast sample back to model compatible dtype
         # prev_sample = prev_sample.to(model_output.dtype)

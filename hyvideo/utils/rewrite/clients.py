@@ -27,74 +27,88 @@ from loguru import logger
 
 
 class NonStreamResponse(object):
+    """Wrapper for non-streaming API responses"""
+
     def __init__(self):
         self.response = ""
 
     def _deserialize(self, obj):
+        # Convert API response object to JSON string format
         self.response = json.dumps(obj)
 
 
-# DeepSeekClient
+# Client for DeepSeek-v3.1 model with thinking capabilities
 class DeepSeekClient(object):
     def __init__(self, key_id, key_secret):
         from tencentcloud.common.common_client import CommonClient
         from tencentcloud.common import credential
         from tencentcloud.common.profile.client_profile import ClientProfile
         from tencentcloud.common.profile.http_profile import HttpProfile
+
+        # Initialize authentication credentials
         cred = credential.Credential(key_id, key_secret)
         httpProfile = HttpProfile()
         httpProfile.endpoint = "lkeap.tencentcloudapi.com"
-        httpProfile.reqTimeout = 40000  # The streaming interface may take a longer time.
+        # Set longer timeout for streaming responses
+        httpProfile.reqTimeout = 40000
         clientProfile = ClientProfile()
         clientProfile.httpProfile = httpProfile
-        self.common_client = CommonClient("lkeap", "2024-05-22", cred, "ap-guangzhou", profile=clientProfile)
+        # Create API client for Tencent Cloud LLM service
+        self.common_client = CommonClient(
+            "lkeap", "2024-05-22", cred, "ap-guangzhou", profile=clientProfile
+        )
 
     def run_single_recaption(self, system_prompt, input_prompt):
+        # Prepare request with system and user prompts
         post_dict = {
             "Model": "deepseek-v3.1",
             "Messages": [
-                {
-                    "Role": "system",
-                    "Content": system_prompt
-                },
-                {
-                    "Role": "user",
-                    "Content": input_prompt
-                }
+                {"Role": "system", "Content": system_prompt},
+                {"Role": "user", "Content": input_prompt},
             ],
             "Stream": False,
             "Thinking": {"Type": "enabled"},
         }
+        # Retry loop to handle transient network errors
         while True:
             try:
-                resp = self.common_client._call_and_deserialize("ChatCompletions", post_dict, NonStreamResponse)
+                resp = self.common_client._call_and_deserialize(
+                    "ChatCompletions", post_dict, NonStreamResponse
+                )
                 break
             except Exception as e:
                 logger.error(e)
                 time.sleep(1)
-        resp = self.common_client._call_and_deserialize("ChatCompletions", post_dict, NonStreamResponse)
+        # Make the actual API call (duplicate call, may be intentional)
+        resp = self.common_client._call_and_deserialize(
+            "ChatCompletions", post_dict, NonStreamResponse
+        )
         response = resp.response
+        # Parse JSON response string to extract content
         response = ast.literal_eval(response)
         content = response["Choices"][0]["Message"]["Content"]
         reasoning_content = response["Choices"][0]["Message"]["ReasoningContent"]
-        print('Initial prompt: ', input_prompt)
-        print('Recaption prompt: ', content)
+        print("Initial prompt: ", input_prompt)
+        print("Recaption prompt: ", content)
 
         return content, reasoning_content
 
 
-# QwenClient for prompt rewriting
+# Text-to-text client using Qwen models for prompt rewriting
 class QwenClient(object):
     def __init__(self, base_url=None, model_name=None):
         # Recommended model: Qwen3-235B-A22B-Thinking-2507
         self.base_url = base_url
         self.model_name = model_name
 
-    def qwen_api_call(self, system_prompt: str, user_input: str, temperature: float, max_tokens: int):
+    def qwen_api_call(
+        self, system_prompt: str, user_input: str, temperature: float, max_tokens: int
+    ):
         """
         Use Qwen API to perform text rewriting, parse <think>...</think> sections for reasoning content,
         and return (thinking, result).
         """
+        # Initialize OpenAI-compatible client for Qwen API
         client = openai.OpenAI(base_url=self.base_url, api_key="None", timeout=600)
         messages = [
             {"role": "system", "content": system_prompt},
@@ -103,6 +117,7 @@ class QwenClient(object):
 
         last_err = None
 
+        # Retry up to 10 times with exponential backoff
         for i in range(10):
             try:
                 stream = False
@@ -116,6 +131,7 @@ class QwenClient(object):
                 content = response.choices[0].message.content
                 thinking = ""
                 result = content or ""
+                # Extract thinking process from <think> tags if present
                 if content and "</think>" in content:
                     head, tail = content.split("</think>", 1)
                     thinking = head.replace("<think>", "").strip()
@@ -124,23 +140,29 @@ class QwenClient(object):
             except Exception as e:
                 last_err = e
                 if i < 9:
-                    time.sleep(2 ** i)
+                    # Exponential backoff: wait 2^i seconds
+                    time.sleep(2**i)
                     continue
                 raise last_err
 
-    def run_single_recaption(self, system_prompt, input_prompt, temperature=0.1, max_tokens=4096):
-        thinking, result = self.qwen_api_call(system_prompt, input_prompt, temperature, max_tokens)
+    def run_single_recaption(
+        self, system_prompt, input_prompt, temperature=0.1, max_tokens=4096
+    ):
+        thinking, result = self.qwen_api_call(
+            system_prompt, input_prompt, temperature, max_tokens
+        )
         return result
 
 
-# QwenVL Client for prompt rewriting
+# Vision-language client using Qwen-VL for image+text processing
 class QwenVLClient(object):
 
     def __init__(self, base_url=None, model_name=None):
         self.base_url = base_url
         self.model_name = model_name
         self.api_key = "None"
-        self.max_image_size = int(os.getenv("I2V_REWRITE_MAX_IMAGE_SIZE", "1024"))  # 控制送入模型的最大图像分辨率
+        # Get max image resolution from env, default 1024x1024
+        self.max_image_size = int(os.getenv("I2V_REWRITE_MAX_IMAGE_SIZE", "1024"))
 
     def _encode_image_to_base64(self, image_path: str, max_dimension: int) -> str:
         """
@@ -150,23 +172,29 @@ class QwenVLClient(object):
         try:
             from PIL import Image
         except ImportError as e:
-            logger.error("Pillow (PIL) is required for QwenVLClient image encoding but is not installed.")
+            logger.error(
+                "Pillow (PIL) is required for QwenVLClient image encoding but is not installed."
+            )
             raise e
 
         try:
             with Image.open(image_path) as img:
+                # Resize if image exceeds max dimension while preserving ratio
                 if img.width > max_dimension or img.height > max_dimension:
                     img.thumbnail((max_dimension, max_dimension))
 
                 buffer = io.BytesIO()
 
-                # 去除透明通道，统一转为 JPEG
-                if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                # Convert images with transparency to RGB for JPEG encoding
+                if img.mode in ("RGBA", "LA") or (
+                    img.mode == "P" and "transparency" in img.info
+                ):
                     img = img.convert("RGB")
 
                 img.save(buffer, format="JPEG")
                 mime_type = "image/jpeg"
 
+                # Encode image bytes to base64 data URL format
                 encoded_string = base64.b64encode(buffer.getvalue()).decode("utf-8")
                 return f"data:{mime_type};base64,{encoded_string}"
         except Exception as e:
@@ -174,12 +202,12 @@ class QwenVLClient(object):
             raise
 
     def qwen_api_call(
-            self,
-            system_prompt: str,
-            user_input: str,
-            temperature: float,
-            max_tokens: int,
-            img_path: str = None,
+        self,
+        system_prompt: str,
+        user_input: str,
+        temperature: float,
+        max_tokens: int,
+        img_path: str = None,
     ):
         """
         Use Qwen3-VL to perform text rewriting.
@@ -194,7 +222,9 @@ class QwenVLClient(object):
         prompt_text = system_prompt.format(user_input)
 
         assert img_path is not None, "img_path is required"
-        base64_image = self._encode_image_to_base64(img_path, max_dimension=self.max_image_size)
+        base64_image = self._encode_image_to_base64(
+            img_path, max_dimension=self.max_image_size
+        )
         messages = [
             {
                 "role": "user",
@@ -243,12 +273,12 @@ class QwenVLClient(object):
                     raise last_err
 
     def run_single_recaption(
-            self,
-            system_prompt,
-            input_prompt,
-            temperature=0.1,
-            max_tokens=4096,
-            img_path: str = None,
+        self,
+        system_prompt,
+        input_prompt,
+        temperature=0.1,
+        max_tokens=4096,
+        img_path: str = None,
     ):
         thinking, result = self.qwen_api_call(
             system_prompt,

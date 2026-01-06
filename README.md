@@ -36,6 +36,9 @@
 https://github.com/user-attachments/assets/9fd12b40-41ab-4201-8667-8b333db1123d
 
 ## 🔥 News
+- January 6, 2026: 🚀 We release the training code for HunyuanVideo version, enabling the community to train and fine-tune their own world models!
+- January 6, 2026: 🎯 We open-source the WAN version inference code and model weights, providing a lightweight alternative for distributed inference!
+- January 6, 2026: ⚡ We update the HunyuanVideo inference code with an accelerated version for even faster inference speeds!
 - December 17, 2025: 👋 We present the [technical report](https://3d-models.hunyuan.tencent.com/world/world1_5/HYWorld_1.5_Tech_Report.pdf) and [research paper](https://arxiv.org/abs/2512.14614) of HY-World 1.5 (WorldPlay), please check out the details and spark some discussion!
 - December 17, 2025: 🤗 We release the first open-source, real-time interactive, and long-term geometric consistent world model, HY-World 1.5 (WorldPlay)!
 
@@ -47,19 +50,34 @@ https://github.com/user-attachments/assets/9fd12b40-41ab-4201-8667-8b333db1123d
 
 
 ## 📋 Table of Contents
+- [🎥 Video](#-video)
 - [🔥 News](#-news)
 - [📋 Table of Contents](#-table-of-contents)
 - [📖 Introduction](#-introduction)
 - [✨ Highlights](#-highlights)
 - [📜 System Requirements](#-system-requirements)
 - [🛠️ Dependencies and Installation](#️-dependencies-and-installation)
+  - [1. Create Environment](#1-create-environment)
+  - [2. Install Attention Libraries (Optional but Recommended)](#2-install-attention-libraries-optional-but-recommended)
+  - [3. Install AngelSlim and DeepGEMM](#3-install-angelslim-and-deepgemm)
+  - [4. Download All Required Models](#4-download-all-required-models)
 - [🎮 Quick Start](#-quick-start)
-- [🧱 Download Pretrained Models](#-download-pretrained-models)
+- [🧱 Model Checkpoints](#-model-checkpoints)
 - [🔑 Inference](#-inference)
+  - [Configure Model Paths](#configure-model-paths)
+  - [Configuration Options](#configuration-options)
+  - [Model Selection](#model-selection)
+  - [Camera Trajectory Control](#camera-trajectory-control)
+    - [Option 1: Pose String (Recommended for Quick Testing)](#option-1-pose-string-recommended-for-quick-testing)
+    - [Option 2: Custom JSON Files](#option-2-custom-json-files)
+  - [Prompt Rewriting (Optional)](#prompt-rewriting-optional)
+  - [Run Inference](#run-inference)
+- [⚙️Training](#️training)
 - [📊 Evaluation](#-evaluation)
 - [🎬 More Examples](#-more-examples)
 - [📝 TODO](#-todo)
 - [📚 Citation](#-citation)
+- [Contact](#contact)
 - [🙏 Acknowledgements](#-acknowledgements)
 
 ## 📖 Introduction
@@ -106,14 +124,41 @@ conda activate worldplay
 pip install -r requirements.txt
 ```
 
-### 2. Install Flash Attention (Optional but Recommended)
-Install Flash Attention for faster inference and reduced GPU memory consumption:
-```bash
-pip install flash-attn --no-build-isolation
-```
-Detailed instructions: [Flash Attention](https://github.com/Dao-AILab/flash-attention)
+### 2. Install Attention Libraries (Optional but Recommended)
+* Flash Attention: 
+  Install Flash Attention for faster inference and reduced GPU memory consumption:
+  ```bash
+  pip install flash-attn --no-build-isolation
+  ```
+  Detailed instructions: [Flash Attention](https://github.com/Dao-AILab/flash-attention)
 
-### 3. Download All Required Models
+
+* SageAttention: 
+  To enable SageAttention for faster inference, you need to install it by the following command:
+  ```bash
+  git clone https://github.com/cooper1637/SageAttention.git
+  cd SageAttention 
+  export EXT_PARALLEL=4 NVCC_APPEND_FLAGS="--threads 8" MAX_JOBS=32 # Optional
+  python3 setup.py install
+  ```
+
+### 3. Install AngelSlim and DeepGEMM
+* AngelSlim: 
+  Install AngelSlim to quantize transformer.
+  ```bash
+  pip install angelslim==0.2.2
+  ```
+
+* DeepGEMM: 
+  To enable fp8 gemm for transformer, you need to install it by the following command:
+  ```bash
+  git clone --recursive git@github.com:deepseek-ai/DeepGEMM.git
+  cd DeepGEMM
+  ./develop.sh
+  ./install.sh
+  ```
+
+### 4. Download All Required Models
 
 We provide a download script that automatically downloads all required models:
 
@@ -153,13 +198,25 @@ Try our **online demo** without installation: https://3d.hunyuan.tencent.com/sce
 
 | Model |  Description | Download |
 |-------|--------------|----------|
-| HY-World1.5-Bidirectional-480P-I2V | Bidirectional attention model with full context awareness. | [Link](https://huggingface.co/tencent/HY-WorldPlay/tree/main/bidirectional_model) |
+| HY-World1.5-Bidirectional-480P-I2V | Bidirectional attention model with reconstituted context memory. | [Link](https://huggingface.co/tencent/HY-WorldPlay/tree/main/bidirectional_model) |
 | HY-World1.5-Autoregressive-480P-I2V | Autoregressive model with reconstituted context memory. | [Link](https://huggingface.co/tencent/HY-WorldPlay/tree/main/ar_model) |
+| HY-World1.5-Autoregressive-480P-I2V-rl | Autoregressive model with RL post-training. | To be released |
 | HY-World1.5-Autoregressive-480P-I2V-distill | Distilled autoregressive model optimized for fast inference (4 steps). | [Link](https://huggingface.co/tencent/HY-WorldPlay/tree/main/ar_distilled_action_model) |   
+| HY-World1.5-Autoregressive-480P-I2V-rl-distill | Distilled autoregressive model with RL post-training. | To be released | 
+
+<p align="center">
+  <img src="assets/model_zoo.png">
+</p>  
 
 ## 🔑 Inference
 
-### Configure Model Paths
+We provide two inference pipelines:
+1. **HunyuanVideo-based Pipeline** (recommended): Uses the full HunyuanVideo model with action control
+2. **WAN Pipeline** (lightweight): A streamlined pipeline with distributed inference support
+
+### HunyuanVideo-based Inference
+
+#### Configure Model Paths
 
 After running `download_models.py`, update `run.sh` with the printed model paths:
 
@@ -171,19 +228,19 @@ BI_ACTION_MODEL_PATH=<path_printed_by_download_script>/bidirectional_model
 AR_DISTILL_ACTION_MODEL_PATH=<path_printed_by_download_script>/ar_distilled_action_model
 ```
 
-### Configuration Options
+#### Configuration Options
 
 In `run.sh`, you can configure:
 
-| Parameter | Description |
-|-----------|-------------|
-| `PROMPT` | Text description of the scene |
-| `IMAGE_PATH` | Input image path (required for I2V) |
-| `NUM_FRAMES` | Number of frames to generate (default: 125) |
-| `N_INFERENCE_GPU` | Number of GPUs for parallel inference |
-| `POSE_JSON_PATH` | Camera trajectory file |
+| Parameter | Description                                                                                         |
+|-----------|-----------------------------------------------------------------------------------------------------|
+| `PROMPT` | Text description of the scene                                                                       |
+| `IMAGE_PATH` | Input image path (required for I2V)                                                                 |
+| `NUM_FRAMES` | Number of frames to generate (default: 125). **Important Note:** Must satisfy `(num_frames-1) % 4 == 0`. For bidirectional models: `[(num_frames-1) // 4 + 1] % 16 == 0`. For autoregressive models: `[(num_frames-1) // 4 + 1] % 4 == 0` |
+| `N_INFERENCE_GPU` | Number of GPUs for parallel inference                                                               |
+| `POSE` | Camera trajectory: pose string (e.g., `w-31` means generating `[1 + 31]` latents) or JSON file path |
 
-### Model Selection
+#### Model Selection
 
 Uncomment one of the three inference commands in `run.sh`:
 
@@ -202,15 +259,49 @@ Uncomment one of the three inference commands in `run.sh`:
    --action_ckpt $AR_DISTILL_ACTION_MODEL_PATH --few_step true --num_inference_steps 4 --model_type 'ar'
    ```
 
-### Custom Camera Trajectories
+#### Camera Trajectory Control
 
-Use `generate_custom_trajectory.py` to create custom camera paths:
+You have two options to control camera trajectories:
+
+##### Option 1: Pose String (Recommended for Quick Testing)
+
+Use intuitive pose strings by setting the `POSE` variable in `run.sh`:
+
+```bash
+POSE='w-31'
+```
+
+**Supported Actions:**
+- **Movement**: `w` (forward), `s` (backward), `a` (left), `d` (right)
+- **Rotation**: `up` (pitch up), `down` (pitch down), `left` (yaw left), `right` (yaw right)
+- **Format**: `action-duration` where duration specifies the number of latents corresponding to the given action.
+
+**Examples:**
+```bash
+# Move forward for 31 latents (default). Generate [1 + 31] latents
+POSE='w-31'
+
+# Move forward 3 latents, rotate right 1 latents, move right 4 latents. Generate [1 + 3 + 1 + 4] latents
+POSE='w-3, right-1, d-4'
+
+# Complex trajectory. Generate [1 + 2 + 1 + 2 + 4] latents
+POSE='w-2, right-1, d-2, up-4'
+```
+
+##### Option 2: Custom JSON Files
+
+For more complex trajectories, use `generate_custom_trajectory.py`:
 
 ```bash
 python generate_custom_trajectory.py
 ```
 
-### Prompt Rewriting (Optional)
+Then set the JSON file path in `run.sh`:
+```bash
+POSE='./assets/pose/your_custom_trajectory.json'
+```
+
+#### Prompt Rewriting (Optional)
 
 For better prompts, you can enable prompt rewriting with a vLLM server:
 
@@ -220,7 +311,7 @@ export T2V_REWRITE_MODEL_NAME="<your_model_name>"
 REWRITE=true  # in run.sh
 ```
 
-### Run Inference
+#### Run Inference
 
 After editing `run.sh` to configure your settings, run:
 
@@ -228,6 +319,15 @@ After editing `run.sh` to configure your settings, run:
 bash run.sh
 ```
 
+---
+
+### WAN Pipeline Inference
+
+For detailed information about the WAN pipeline (lightweight alternative with distributed inference support), please refer to [wan/README.md](wan/README.md).
+
+## ⚙️Training
+
+We provide a detailed documentation in [Training Documentation](./trainer/README.md).
 
 ## 📊 Evaluation
 
@@ -262,7 +362,6 @@ https://github.com/user-attachments/assets/531bf0ad-1fca-4d76-bb65-84701368926d
 https://github.com/user-attachments/assets/f165f409-5a74-4e19-a32c-fc98d92259e1
 
 ## 📝 TODO
-- [ ] Acceleration & Quantization
 - [ ] Open-source training code
 
 ## 📚 Citation

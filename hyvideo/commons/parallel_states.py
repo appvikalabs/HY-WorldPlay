@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 
+
 @dataclass
 class ParallelDims:
     sp: int = 1
@@ -38,7 +39,7 @@ class ParallelDims:
         mesh = init_device_mesh(
             device_type,
             [self.world_size // self.sp, self.sp],
-            mesh_dim_names=["dp", "sp"]
+            mesh_dim_names=["dp", "sp"],
         )
         self.world_mesh = mesh
         return mesh
@@ -49,16 +50,16 @@ class ParallelDims:
 
     @property
     def sp_group(self):
-        return self.world_mesh['sp'].get_group()
+        return self.world_mesh["sp"].get_group()
 
     @property
     def sp_mesh(self):
-        return self.world_mesh['sp']
+        return self.world_mesh["sp"]
 
     @property
     def sp_rank(self):
         if self.sp_enabled:
-            return self.world_mesh['sp'].get_local_rank()
+            return self.world_mesh["sp"].get_local_rank()
         else:
             return dist.get_rank()
 
@@ -66,7 +67,9 @@ class ParallelDims:
     def dp_enabled(self):
         return self.sp > 1
 
+
 __parallel_dims = None
+
 
 def initialize_parallel_state(
     sp: int = 1,
@@ -74,6 +77,7 @@ def initialize_parallel_state(
     global __parallel_dims
     __parallel_dims = ParallelDims(sp=sp)
     return __parallel_dims
+
 
 def get_parallel_state():
     if __parallel_dims is None:

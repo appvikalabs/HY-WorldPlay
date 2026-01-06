@@ -47,7 +47,6 @@ from hyvideo.models.transformers.modules.ssta_attention import ssta_3d_attention
 from hyvideo.commons.infer_state import get_infer_state
 
 
-
 @torch.compiler.disable
 def attention(
     q: torch.Tensor,
@@ -78,29 +77,36 @@ def attention(
     if attn_mode == "torch":
         # transpose q,k,v dim to fit scaled_dot_product_attention
         query = q.transpose(1, 2)  # B * H * L * D
-        key = k.transpose(1, 2)    # B * H * L * D
+        key = k.transpose(1, 2)  # B * H * L * D
         value = v.transpose(1, 2)  # B * H * L * D
-        
+
         if attn_mask is not None:
-            if attn_mask.dtype != torch.bool and attn_mask.dtype in [torch.int64, torch.int32]:
-                assert attn_mask.max() <= 1 and attn_mask.min() >= 0, f'attention mask must be (0,1).'
+            if attn_mask.dtype != torch.bool and attn_mask.dtype in [
+                torch.int64,
+                torch.int32,
+            ]:
+                assert (
+                    attn_mask.max() <= 1 and attn_mask.min() >= 0
+                ), f"attention mask must be (0,1)."
                 attn_mask = attn_mask.to(torch.bool)
             elif attn_mask.dtype != torch.bool:
                 attn_mask = attn_mask.to(query.dtype)
-                raise NotImplementedError(f'Float attention mask is not implemented for torch attention.')
-            attn_mask1 = einops.rearrange(attn_mask, 'b l -> b 1 l 1')
-            attn_mask2 = einops.rearrange(attn_mask1, 'b 1 l 1 -> b 1 1 l')
+                raise NotImplementedError(
+                    f"Float attention mask is not implemented for torch attention."
+                )
+            attn_mask1 = einops.rearrange(attn_mask, "b l -> b 1 l 1")
+            attn_mask2 = einops.rearrange(attn_mask1, "b 1 l 1 -> b 1 1 l")
             attn_mask = attn_mask1 & attn_mask2
-        
+
         x = F.scaled_dot_product_attention(
-                                        query, 
-                                        key, 
-                                        value, 
-                                        attn_mask=attn_mask, 
-                                        dropout_p=drop_rate, 
-                                        is_causal=causal
-                                        )
-        
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=drop_rate,
+            is_causal=causal,
+        )
+
         # transpose back
         x = x.transpose(1, 2)  # B * L * H * D
         b, s, h, d = x.shape
@@ -111,20 +117,28 @@ def attention(
         qkv = torch.stack([q, k, v], dim=2)
         if attn_mask is not None and attn_mask.dtype != torch.bool:
             attn_mask = attn_mask.bool()
-        x = flash_attn_no_pad(qkv, attn_mask, causal=causal, dropout_p=drop_rate, softmax_scale=None)
+        x = flash_attn_no_pad(
+            qkv, attn_mask, causal=causal, dropout_p=drop_rate, softmax_scale=None
+        )
         b, s, a, d = x.shape
         out = x.reshape(b, s, -1)
         return out
 
+
 @torch.compiler.disable
-def sequence_parallel_attention_txt(q, k, v,
-                                img_q_len, img_kv_len,
-                                attn_mode=None, text_mask=None,
-                                attn_param=None,
-                                block_idx=None,
-                                kv_cache=None,
-                                cache_txt=False
-                                ):
+def sequence_parallel_attention_txt(
+    q,
+    k,
+    v,
+    img_q_len,
+    img_kv_len,
+    attn_mode=None,
+    text_mask=None,
+    attn_param=None,
+    block_idx=None,
+    kv_cache=None,
+    cache_txt=False,
+):
     encoder_query = q
     encoder_key = k
     encoder_value = v
@@ -138,11 +152,10 @@ def sequence_parallel_attention_txt(q, k, v,
         sp_rank = parallel_dims.sp_rank
 
     if enable_sp:
+
         def shrink_head(encoder_state, dim):
             local_heads = encoder_state.shape[dim] // sp_size
-            return encoder_state.narrow(
-                dim, sp_rank * local_heads, local_heads
-            )
+            return encoder_state.narrow(dim, sp_rank * local_heads, local_heads)
 
         encoder_query = shrink_head(encoder_query, dim=2)
         encoder_key = shrink_head(encoder_key, dim=2)
@@ -153,22 +166,35 @@ def sequence_parallel_attention_txt(q, k, v,
     encoder_value = encoder_value.transpose(1, 2)
     t_kv = {}
     if cache_txt:
-        t_kv['k_txt'] = encoder_key
-        t_kv['v_txt'] = encoder_value
+        t_kv["k_txt"] = encoder_key
+        t_kv["v_txt"] = encoder_value
 
-    encoder_hidden_states = F.scaled_dot_product_attention(
-                                                        encoder_query, 
-                                                        encoder_key, 
-                                                        encoder_value, 
-                                                        dropout_p=0.0, 
-                                                        is_causal=False
-                                                        )
+    infer_state = get_infer_state()
+    enable_sageattn = (
+        infer_state.enable_sageattn and block_idx in infer_state.sage_blocks_range
+    )
+    if enable_sageattn:
+        from sageattention import sageattn
+
+        encoder_hidden_states = sageattn(
+            encoder_query,
+            encoder_key,
+            encoder_value,
+            tensor_layout="HND",
+            is_causal=False,
+        )
+    else:
+        encoder_hidden_states = F.scaled_dot_product_attention(
+            encoder_query, encoder_key, encoder_value, dropout_p=0.0, is_causal=False
+        )
 
     # transpose back
     encoder_hidden_states = encoder_hidden_states.transpose(1, 2)  # [B, S, H, D]
 
     if enable_sp:
-        encoder_hidden_states = all_gather(encoder_hidden_states, dim=2, group=sp_group).contiguous()
+        encoder_hidden_states = all_gather(
+            encoder_hidden_states, dim=2, group=sp_group
+        ).contiguous()
         encoder_hidden_states = encoder_hidden_states.to(q.dtype)
 
     b, s, a, d = encoder_hidden_states.shape
@@ -176,12 +202,16 @@ def sequence_parallel_attention_txt(q, k, v,
 
     return encoder_hidden_states, t_kv
 
+
 @torch.compiler.disable
-def sequence_parallel_attention_vision(q, k, v,
-                                block_idx=None,
-                                kv_cache=None,
-                                cache_vision=False,
-                                ):
+def sequence_parallel_attention_vision(
+    q,
+    k,
+    v,
+    block_idx=None,
+    kv_cache=None,
+    cache_vision=False,
+):
     assert kv_cache is not None
     query, query_prope = q
     key, key_prope = k
@@ -207,33 +237,48 @@ def sequence_parallel_attention_vision(q, k, v,
     key = key.transpose(1, 2)
     value = value.transpose(1, 2)
 
-    cache_vision_key = kv_cache[block_idx]['k_vision'] # previous key
-    cache_vision_value = kv_cache[block_idx]['v_vision'] # previous value
+    cache_vision_key = kv_cache[block_idx]["k_vision"]  # previous key
+    cache_vision_value = kv_cache[block_idx]["v_vision"]  # previous value
 
     vision_kv = {}
     if cache_vision:
-        vision_kv['k_vision'] = key
-        vision_kv['v_vision'] = value
+        vision_kv["k_vision"] = key
+        vision_kv["v_vision"] = value
 
     if not cache_vision and cache_vision_key is not None:
         key = torch.cat([cache_vision_key, key], dim=2)
         value = torch.cat([cache_vision_value, value], dim=2)
 
-    encoder_key = kv_cache[block_idx]['k_txt']
-    encoder_value = kv_cache[block_idx]['v_txt']
-    encoder_key = repeat(encoder_key, 'B H S D->(B R) H S D', R=2)
-    encoder_value = repeat(encoder_value, 'B H S D->(B R) H S D', R=2)
+    encoder_key = kv_cache[block_idx]["k_txt"]
+    encoder_value = kv_cache[block_idx]["v_txt"]
+    encoder_key = repeat(encoder_key, "B H S D->(B R) H S D", R=2)
+    encoder_value = repeat(encoder_value, "B H S D->(B R) H S D", R=2)
 
     key = torch.cat([encoder_key, key], dim=2)
     value = torch.cat([encoder_value, value], dim=2)
 
-    hidden_states = F.scaled_dot_product_attention(query, key, value, dropout_p=0.0, is_causal=False)
+    infer_state = get_infer_state()
+    enable_sageattn = (
+        infer_state.enable_sageattn and block_idx in infer_state.sage_blocks_range
+    )
+    if enable_sageattn:
+        from sageattention import sageattn
+
+        hidden_states = sageattn(
+            query, key, value, tensor_layout="HND", is_causal=False
+        )
+    else:
+        hidden_states = F.scaled_dot_product_attention(
+            query, key, value, dropout_p=0.0, is_causal=False
+        )
 
     # transpose back
     hidden_states = hidden_states.transpose(1, 2)  # [B, S, H, D]
 
     if enable_sp:
-        hidden_states = all_to_all_4D(hidden_states, sp_group, scatter_dim=1, gather_dim=2)
+        hidden_states = all_to_all_4D(
+            hidden_states, sp_group, scatter_dim=1, gather_dim=2
+        )
         hidden_states = hidden_states.to(query.dtype)
 
     b, s, a, d = hidden_states.shape
@@ -242,29 +287,43 @@ def sequence_parallel_attention_vision(q, k, v,
 
     return hidden_states, hidden_states_prope, vision_kv
 
-@torch.compiler.disable
-def parallel_attention(q, k, v, img_q_len, img_kv_len, 
-                       attn_mode=None, text_mask=None, 
-                       attn_param=None,
-                       block_idx=None,
-                       ):
-    return sequence_parallel_attention(q, 
-                                       k, 
-                                       v, 
-                                       img_q_len, 
-                                       img_kv_len, 
-                                       attn_mode, 
-                                       text_mask, 
-                                       attn_param=attn_param, 
-                                       block_idx=block_idx
-                                       )
 
-def sequence_parallel_attention(q, k, v, 
-                                img_q_len, img_kv_len, 
-                                attn_mode=None, text_mask=None,
-                                attn_param=None,
-                                block_idx=None,
-                                ):
+@torch.compiler.disable
+def parallel_attention(
+    q,
+    k,
+    v,
+    img_q_len,
+    img_kv_len,
+    attn_mode=None,
+    text_mask=None,
+    attn_param=None,
+    block_idx=None,
+):
+    return sequence_parallel_attention(
+        q,
+        k,
+        v,
+        img_q_len,
+        img_kv_len,
+        attn_mode,
+        text_mask,
+        attn_param=attn_param,
+        block_idx=block_idx,
+    )
+
+
+def sequence_parallel_attention(
+    q,
+    k,
+    v,
+    img_q_len,
+    img_kv_len,
+    attn_mode=None,
+    text_mask=None,
+    attn_param=None,
+    block_idx=None,
+):
     assert attn_mode is not None
     query, encoder_query = q
     key, encoder_key = k
@@ -277,7 +336,7 @@ def sequence_parallel_attention(q, k, v,
         sp_group = parallel_dims.sp_group
         sp_size = parallel_dims.sp
         sp_rank = parallel_dims.sp_rank
-    
+
     if enable_sp:
         # batch_size, seq_len, attn_heads, head_dim
         query = all_to_all_4D(query, sp_group, scatter_dim=2, gather_dim=1)
@@ -286,9 +345,7 @@ def sequence_parallel_attention(q, k, v,
 
         def shrink_head(encoder_state, dim):
             local_heads = encoder_state.shape[dim] // sp_size
-            return encoder_state.narrow(
-                dim, sp_rank * local_heads, local_heads
-            )
+            return encoder_state.narrow(dim, sp_rank * local_heads, local_heads)
 
         encoder_query = shrink_head(encoder_query, dim=2)
         encoder_key = shrink_head(encoder_key, dim=2)
@@ -298,13 +355,16 @@ def sequence_parallel_attention(q, k, v,
     encoder_sequence_length = encoder_query.size(1)
 
     attn_mode = maybe_fallback_attn_mode(attn_mode, get_infer_state(), block_idx)
-    
+
     if attn_mode == "sageattn":
         from sageattention import sageattn
+
         query = torch.cat([query, encoder_query], dim=1)
         key = torch.cat([key, encoder_key], dim=1)
         value = torch.cat([value, encoder_value], dim=1)
-        hidden_states = sageattn(query, key, value, tensor_layout="NHD", is_causal=False)
+        hidden_states = sageattn(
+            query, key, value, tensor_layout="NHD", is_causal=False
+        )
     elif attn_mode == "torch":
         query = torch.cat([query, encoder_query], dim=1)
         key = torch.cat([key, encoder_key], dim=1)
@@ -315,30 +375,32 @@ def sequence_parallel_attention(q, k, v,
             attn_mask = None
 
         if attn_mask is not None:
-            if attn_mask.dtype != torch.bool and attn_mask.dtype in [torch.int64, torch.int32]:
-                assert attn_mask.max() <= 1 and attn_mask.min() >= 0, f'attention mask must be (0,1).'
+            if attn_mask.dtype != torch.bool and attn_mask.dtype in [
+                torch.int64,
+                torch.int32,
+            ]:
+                assert (
+                    attn_mask.max() <= 1 and attn_mask.min() >= 0
+                ), f"attention mask must be (0,1)."
                 attn_mask = attn_mask.to(torch.bool)
             elif attn_mask.dtype != torch.bool:
                 attn_mask = attn_mask.to(query.dtype)
-                raise NotImplementedError(f'Float attention mask is not implemented for torch attention.')
-            
+                raise NotImplementedError(
+                    f"Float attention mask is not implemented for torch attention."
+                )
+
         # transpose q,k,v dim to fit scaled_dot_product_attention
         query = query.transpose(1, 2)  # B * Head_num * length * dim
-        key = key.transpose(1, 2)      # B * Head_num * length * dim
+        key = key.transpose(1, 2)  # B * Head_num * length * dim
         value = value.transpose(1, 2)  # B * Head_num * length * dim
         if attn_mask is not None:
-            attn_mask1 = einops.rearrange(attn_mask, 'b l -> b 1 l 1')
-            attn_mask2 = einops.rearrange(attn_mask1, 'b 1 l 1 -> b 1 1 l')
+            attn_mask1 = einops.rearrange(attn_mask, "b l -> b 1 l 1")
+            attn_mask2 = einops.rearrange(attn_mask1, "b 1 l 1 -> b 1 1 l")
             attn_mask = attn_mask1 & attn_mask2
         hidden_states = F.scaled_dot_product_attention(
-                                                    query, 
-                                                    key, 
-                                                    value, 
-                                                    attn_mask=attn_mask, 
-                                                    dropout_p=0.0, 
-                                                    is_causal=False
-                                                    )
-        
+            query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False
+        )
+
         # transpose back
         hidden_states = hidden_states.transpose(1, 2)
 
@@ -354,10 +416,12 @@ def sequence_parallel_attention(q, k, v,
         value = torch.cat([encoder_value, value], dim=1)
 
         # prepare causal mask for chunk-wise attention
-        latent_seq_length = attn_param['thw'][-1] * attn_param['thw'][-2] 
+        latent_seq_length = attn_param["thw"][-1] * attn_param["thw"][-2]
         chunk_seq_length = latent_seq_length * 4
         chunk_num = (vision_seq_length) // chunk_seq_length
-        causal_mask = torch.zeros((total_seq_length, total_seq_length), device=query.device)
+        causal_mask = torch.zeros(
+            (total_seq_length, total_seq_length), device=query.device
+        )
         causal_mask[:, :text_seq_length] = 1  # no attention for the rest
         for i in range(chunk_num):
             start_i = text_seq_length + i * chunk_seq_length
@@ -376,14 +440,18 @@ def sequence_parallel_attention(q, k, v,
         key = key.transpose(1, 2)
         value = value.transpose(1, 2)
 
-        hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=causal_mask, dropout_p=0.0,
-                                                       is_causal=False)
+        hidden_states = F.scaled_dot_product_attention(
+            query, key, value, attn_mask=causal_mask, dropout_p=0.0, is_causal=False
+        )
 
         # transpose back
         hidden_states = hidden_states.transpose(1, 2)  # [B, S, H, D]
 
         # return back to the original order: [query, encoder_query]
-        hidden_states, encoder_hidden_states = hidden_states[:, text_seq_length:], hidden_states[:, :text_seq_length]
+        hidden_states, encoder_hidden_states = (
+            hidden_states[:, text_seq_length:],
+            hidden_states[:, :text_seq_length],
+        )
         hidden_states = torch.cat([hidden_states, encoder_hidden_states], dim=1)
 
     elif attn_mode == "flash2":
@@ -394,8 +462,10 @@ def sequence_parallel_attention(q, k, v,
         qkv = torch.stack([query, key, value], dim=2)
 
         attn_mask = F.pad(text_mask, (sequence_length, 0), value=True)
-        hidden_states = flash_attn_no_pad(qkv, attn_mask, causal=False, dropout_p=0.0, softmax_scale=None)
-        
+        hidden_states = flash_attn_no_pad(
+            qkv, attn_mask, causal=False, dropout_p=0.0, softmax_scale=None
+        )
+
     elif attn_mode == "flash3":
         query = torch.cat([query, encoder_query], dim=1)
         key = torch.cat([key, encoder_key], dim=1)
@@ -403,7 +473,9 @@ def sequence_parallel_attention(q, k, v,
         # B, S, 3, H, D
         qkv = torch.stack([query, key, value], dim=2)
         attn_mask = F.pad(text_mask, (sequence_length, 0), value=True)
-        hidden_states = flash_attn_no_pad_v3(qkv, attn_mask, causal=False, dropout_p=0.0, softmax_scale=None)
+        hidden_states = flash_attn_no_pad_v3(
+            qkv, attn_mask, causal=False, dropout_p=0.0, softmax_scale=None
+        )
 
     elif attn_mode == "flex-block-attn":
         sparse_type = attn_param["attn_sparse_type"]  # sta/block_attn/ssta
@@ -432,13 +504,15 @@ def sequence_parallel_attention(q, k, v,
             elif block_size == 16:
                 tile_size = (1, 4, 4)
             else:
-                raise ValueError(f"Error tile_size {tile_size}, only support in [16, 64, 128, 384]")
+                raise ValueError(
+                    f"Error tile_size {tile_size}, only support in [16, 64, 128, 384]"
+                )
             return tile_size
 
         if thw[0] == 1:
             tile_size = get_image_tile(tile_size)
             win_size = [1, 1, 1]
-        elif thw[0] <= 31: # 16fps: 5 * 16 / 4 + 1 = 21; 24fps: 5 * 24 / 4 + 1 = 31
+        elif thw[0] <= 31:  # 16fps: 5 * 16 / 4 + 1 = 21; 24fps: 5 * 24 / 4 + 1 = 31
             ssta_topk = ssta_topk // 2
 
         # Concatenate and permute query, key, value to (B, H, S, D)
@@ -472,17 +546,18 @@ def sequence_parallel_attention(q, k, v,
         hidden_states = hidden_states.permute(0, 2, 1, 3)
 
     else:
-        raise NotImplementedError(
-            f'Unsupported attention mode: {attn_mode}.'
-        )
-
+        raise NotImplementedError(f"Unsupported attention mode: {attn_mode}.")
 
     if enable_sp:
         hidden_states, encoder_hidden_states = hidden_states.split_with_sizes(
-                                                                        (sequence_length, encoder_sequence_length), 
-                                                                        dim=1)
-        hidden_states = all_to_all_4D(hidden_states, sp_group, scatter_dim=1, gather_dim=2)
-        encoder_hidden_states = all_gather(encoder_hidden_states, dim=2, group=sp_group).contiguous()
+            (sequence_length, encoder_sequence_length), dim=1
+        )
+        hidden_states = all_to_all_4D(
+            hidden_states, sp_group, scatter_dim=1, gather_dim=2
+        )
+        encoder_hidden_states = all_gather(
+            encoder_hidden_states, dim=2, group=sp_group
+        ).contiguous()
         hidden_states = hidden_states.to(query.dtype)
         encoder_hidden_states = encoder_hidden_states.to(query.dtype)
         hidden_states = torch.cat([hidden_states, encoder_hidden_states], dim=1)

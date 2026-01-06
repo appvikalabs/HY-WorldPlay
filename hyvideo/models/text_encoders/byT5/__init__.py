@@ -51,14 +51,14 @@ def create_byt5(args, device):
     Returns:
         tuple: (byt5_tokenizer, byt5_model, byt5_max_length)
     """
-    byt5_max_length = args['byt5_max_length']
+    byt5_max_length = args["byt5_max_length"]
     byt5_config = dict(
-        byt5_name=args['byT5_google_path'],
+        byt5_name=args["byT5_google_path"],
         special_token=True,
         color_special_token=True,
         font_special_token=True,
-        color_ann_path=args['multilingual_prompt_format_color_path'],
-        font_ann_path=args['multilingual_prompt_format_font_path'],
+        color_ann_path=args["multilingual_prompt_format_color_path"],
+        font_ann_path=args["multilingual_prompt_format_font_path"],
         multilingual=True,
     )
     huggingface_cache_dir = None
@@ -69,17 +69,17 @@ def create_byt5(args, device):
     )
 
     # Load custom checkpoint if provided
-    if args['byT5_ckpt_path'] is not None:
+    if args["byT5_ckpt_path"] is not None:
         if "cuda" not in str(device):
-            byt5_state_dict = torch.load(args['byT5_ckpt_path'], map_location=device)
+            byt5_state_dict = torch.load(args["byT5_ckpt_path"], map_location=device)
         else:
-            byt5_state_dict = torch.load(args['byT5_ckpt_path'], map_location=device)
-        if 'state_dict' in byt5_state_dict:
+            byt5_state_dict = torch.load(args["byT5_ckpt_path"], map_location=device)
+        if "state_dict" in byt5_state_dict:
             sd = byt5_state_dict["state_dict"]
             newsd = {}
             for k, v in sd.items():
-                if k.startswith('module.text_tower.encoder.'):
-                    newsd[k[len('module.text_tower.encoder.'):]] = v
+                if k.startswith("module.text_tower.encoder."):
+                    newsd[k[len("module.text_tower.encoder.") :]] = v
             byt5_state_dict = newsd
         byt5_model.load_state_dict(byt5_state_dict)
     byt5_model.requires_grad_(False)
@@ -107,16 +107,19 @@ def add_special_token(
         font_ann_path (str): Path to font annotation JSON.
         multilingual (bool): Whether to use multilingual font tokens.
     """
-    with open(font_ann_path, 'r') as f:
+    with open(font_ann_path, "r") as f:
         idx_font_dict = json.load(f)
-    with open(color_ann_path, 'r') as f:
+    with open(color_ann_path, "r") as f:
         idx_color_dict = json.load(f)
 
     if multilingual:
-        font_token = [f'<{font_code[:2]}-font-{idx_font_dict[font_code]}>' for font_code in idx_font_dict]
+        font_token = [
+            f"<{font_code[:2]}-font-{idx_font_dict[font_code]}>"
+            for font_code in idx_font_dict
+        ]
     else:
-        font_token = [f'<font-{i}>' for i in range(len(idx_font_dict))]
-    color_token = [f'<color-{i}>' for i in range(len(idx_color_dict))]
+        font_token = [f"<font-{i}>" for i in range(len(idx_font_dict))]
+    color_token = [f"<color-{i}>" for i in range(len(idx_color_dict))]
     additional_special_tokens = []
     if add_color:
         additional_special_tokens += color_token
@@ -129,12 +132,12 @@ def add_special_token(
 
 
 def load_byt5_and_byt5_tokenizer(
-    byt5_name='google/byt5-small',
+    byt5_name="google/byt5-small",
     special_token=False,
     color_special_token=False,
     font_special_token=False,
-    color_ann_path='assets/color_idx.json',
-    font_ann_path='assets/font_idx_512.json',
+    color_ann_path="assets/color_idx.json",
+    font_ann_path="assets/font_idx_512.json",
     huggingface_cache_dir=None,
     multilingual=False,
     device=None,

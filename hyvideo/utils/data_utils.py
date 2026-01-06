@@ -17,6 +17,7 @@
 import numpy as np
 from PIL import Image
 
+
 def resize_and_center_crop(image, target_width, target_height):
     if target_height == image.shape[0] and target_width == image.shape[1]:
         return image
@@ -49,7 +50,7 @@ def get_closest_ratio(height: float, width: float, ratios: list, buckets: list):
         the closest size in the buckets and the corresponding ratio
     """
     aspect_ratio = float(height) / float(width)
-    
+
     ratios_array = np.array(ratios)
     closest_ratio_id = np.abs(ratios_array - aspect_ratio).argmin()
     closest_size = buckets[closest_ratio_id]

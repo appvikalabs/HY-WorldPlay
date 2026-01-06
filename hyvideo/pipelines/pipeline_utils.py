@@ -18,6 +18,7 @@ from typing import Optional, Union, List
 import inspect
 import torch
 
+
 def retrieve_timesteps(
     scheduler,
     num_inference_steps: Optional[int] = None,

@@ -52,7 +52,7 @@ def _all_to_all_4D(
         seq_lens = [None] * seq_world_size
         dist.all_gather_object(seq_lens, input.shape[1], group)
         # uneven
-        if seq_lens[-1] != seq_lens[0] :
+        if seq_lens[-1] != seq_lens[0]:
             assert seq_lens[0] > seq_lens[-1]
             gap = seq_lens[0] - seq_lens[-1]
             if dist.get_group_rank(group, dist.get_rank()) == seq_world_size - 1:
@@ -61,11 +61,12 @@ def _all_to_all_4D(
         else:
             gap = 0
 
-
         # input (torch.tensor): a tensor sharded along dim 1 (bs, seqlen/P, hc, hs) output: (bs, seqlen, hc/P, hs)
         bs, shard_seqlen, hc, hs = input.shape
         seqlen = shard_seqlen * seq_world_size
-        assert hc % seq_world_size == 0, f'Invalid size: {hc}, which should be divisible by {seq_world_size}'
+        assert (
+            hc % seq_world_size == 0
+        ), f"Invalid size: {hc}, which should be divisible by {seq_world_size}"
         shard_hc = hc // seq_world_size
 
         # transpose groups of heads with the seq-len parallel dimension, so that we can scatter them!
@@ -106,14 +107,13 @@ def _all_to_all_4D(
         else:
             gap = 0
 
-
         assert seqlen % seq_world_size == 0
 
         shard_seqlen = seqlen // seq_world_size
         seq_world_size = dist.get_world_size(group)
 
         # transpose groups of heads with the seq-len parallel dimension, so that we can scatter them!
-        # (bs, seqlen, hc/P, hs) -reshape-> (bs, P, seq_len/P, hc/P, hs) -transpose(0, 3)-> 
+        # (bs, seqlen, hc/P, hs) -reshape-> (bs, P, seq_len/P, hc/P, hs) -transpose(0, 3)->
         # (hc/P, P, seqlen/P, bs, hs) -transpose(0, 1) -> (P, hc/P, seqlen/P, bs, hs)
         input_t = (
             input.reshape(bs, seq_world_size, shard_seqlen, shard_hc, hs)
@@ -137,7 +137,10 @@ def _all_to_all_4D(
         # (hc, seqlen/N, bs, hs) -tranpose(0,2)-> (bs, seqlen/N, hc, hs)
         output = output.transpose(0, 2).contiguous().reshape(bs, shard_seqlen, hc, hs)
 
-        if gap > 0 and dist.get_group_rank(group, dist.get_rank()) == seq_world_size - 1:
+        if (
+            gap > 0
+            and dist.get_group_rank(group, dist.get_rank()) == seq_world_size - 1
+        ):
             output = output[:, :-gap]
 
         return output
@@ -161,7 +164,9 @@ class SeqAllToAll4D(torch.autograd.Function):
         return _all_to_all_4D(input, scatter_idx, gather_idx, group=group)
 
     @staticmethod
-    def backward(ctx: Any, *grad_output: torch.Tensor) -> Tuple[None, torch.Tensor, None, None]:
+    def backward(
+        ctx: Any, *grad_output: torch.Tensor
+    ) -> Tuple[None, torch.Tensor, None, None]:
         return (
             None,
             SeqAllToAll4D.apply(
@@ -173,7 +178,10 @@ class SeqAllToAll4D(torch.autograd.Function):
 
 
 def all_to_all_4D(
-    input_: torch.Tensor, group: dist.ProcessGroup, scatter_dim: int = 2, gather_dim: int = 1,
+    input_: torch.Tensor,
+    group: dist.ProcessGroup,
+    scatter_dim: int = 2,
+    gather_dim: int = 1,
 ):
     return SeqAllToAll4D.apply(group, input_, scatter_dim, gather_dim)
 
@@ -232,7 +240,10 @@ class _AllToAll(torch.autograd.Function):
 
 
 def all_to_all(
-    input_: torch.Tensor, group: dist.ProcessGroup, scatter_dim: int = 2, gather_dim: int = 1
+    input_: torch.Tensor,
+    group: dist.ProcessGroup,
+    scatter_dim: int = 2,
+    gather_dim: int = 1,
 ):
     return _AllToAll.apply(input_, group, scatter_dim, gather_dim)
 
@@ -257,7 +268,10 @@ class _AllGather(torch.autograd.Function):
 
         ctx.input_size = input_size[dim]
 
-        tensor_list = [torch.empty(sizes[i], dtype=input_.dtype, device=input_.device) for i in range(world_size)]
+        tensor_list = [
+            torch.empty(sizes[i], dtype=input_.dtype, device=input_.device)
+            for i in range(world_size)
+        ]
         input_ = input_.contiguous()
         dist.all_gather(tensor_list, input_, group=group)
 

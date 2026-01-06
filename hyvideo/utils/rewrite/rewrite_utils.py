@@ -19,6 +19,7 @@ from hyvideo.utils.rewrite.clients import QwenClient, QwenVLClient
 from hyvideo.utils.rewrite.t2v_prompt import t2v_rewrite_system_prompt
 from hyvideo.utils.rewrite.i2v_prompt import i2v_rewrite_system_prompt
 
+
 def t2v_rewrite(user_prompt, rewrite_client=None):
     base_url = os.getenv("T2V_REWRITE_BASE_URL")
     model_name = os.getenv("T2V_REWRITE_MODEL_NAME")
@@ -30,12 +31,15 @@ def t2v_rewrite(user_prompt, rewrite_client=None):
     if rewrite_client is None:
         rewrite_client = QwenClient(base_url, model_name)
     try:
-        rewritten_prompt = rewrite_client.run_single_recaption(t2v_rewrite_system_prompt, user_prompt)
+        rewritten_prompt = rewrite_client.run_single_recaption(
+            t2v_rewrite_system_prompt, user_prompt
+        )
     except Exception as e:
         raise ValueError(
             f"Failed to rewrite prompt using {type(rewrite_client).__name__}: {e}"
         )
     return rewritten_prompt
+
 
 def i2v_rewrite(user_input, img_path, rewrite_client=None):
     """
@@ -53,12 +57,15 @@ def i2v_rewrite(user_input, img_path, rewrite_client=None):
     if rewrite_client is None:
         rewrite_client = QwenVLClient(i2v_base_url, i2v_model_name)
     try:
-        rewritten_prompt = rewrite_client.run_single_recaption(i2v_rewrite_system_prompt, user_input, img_path=img_path)
+        rewritten_prompt = rewrite_client.run_single_recaption(
+            i2v_rewrite_system_prompt, user_input, img_path=img_path
+        )
     except Exception as e:
         raise ValueError(
             f"Failed to rewrite prompt using {type(rewrite_client).__name__}: {e}"
         )
     return rewritten_prompt
+
 
 def run_prompt_rewrite(user_prompt, img_path, task_type):
     if task_type == "i2v":

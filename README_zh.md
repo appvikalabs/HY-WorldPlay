@@ -32,6 +32,9 @@
 https://github.com/user-attachments/assets/19a8ef47-3d1a-4c29-a80f-500b342bfc80
 
 ## 🔥 新闻
+- 2026年1月6日: 🚀 我们开源了 HunyuanVideo 版本的训练代码，让社区能够训练和微调自己的世界模型！
+- 2026年1月6日: 🎯 我们开源了 WAN 版本模型的推理代码和权重，为分布式推理提供轻量级替代方案！
+- 2026年1月6日: ⚡ 我们更新了 HunyuanVideo 推理代码的加速版本，推理速度更快！
 - 2025年12月17日: 👋 我们发布了 HY-World 1.5 (WorldPlay) 的[技术报告](https://3d-models.hunyuan.tencent.com/world/world1_5/HYWorld_1.5_Tech_Report.pdf)和[研究论文](https://arxiv.org/abs/2512.14614)，欢迎查看详情并展开讨论！
 - 2025年12月17日: 🤗 我们发布了首个开源、实时交互、长期几何一致性的世界模型 HY-World 1.5 (WorldPlay)！
 
@@ -118,13 +121,19 @@ https://github.com/user-attachments/assets/643a33a4-b677-4eff-ad1d-32205c594274
 
 | 模型 | 描述 | 下载 |
 |------|------|------|
-| HY-World1.5-Bidirectional-480P-I2V | 双向注意力模型，具有跨所有帧的完整上下文感知能力 | [下载地址](https://huggingface.co/tencent/HY-WorldPlay/tree/main/bidirectional_model) |
+| HY-World1.5-Bidirectional-480P-I2V | 双向注意力模型，具有重构上下文记忆机制 | [下载地址](https://huggingface.co/tencent/HY-WorldPlay/tree/main/bidirectional_model) |
 | HY-World1.5-Autoregressive-480P-I2V | 自回归模型，具有重构上下文记忆机制和单向的注意力机制以实现长期几何一致性 | [下载地址](https://huggingface.co/tencent/HY-WorldPlay/tree/main/ar_model) |
 | HY-World1.5-Autoregressive-480P-I2V-distill | 自回归模型的蒸馏版，针对推理优化（4步） | [下载地址](https://huggingface.co/tencent/HY-WorldPlay/tree/main/ar_distilled_action_model) |
 
 ## 🔑 推理
 
-### 配置模型路径
+我们提供两种推理管道:
+1. **基于 HunyuanVideo 的管道** (推荐): 使用完整的 HunyuanVideo 模型并支持动作控制
+2. **WAN 管道** (轻量级): 支持分布式推理的精简管道
+
+### 基于 HunyuanVideo 的推理
+
+#### 配置模型路径
 
 运行 `download_models.py` 后，使用打印的模型路径更新 `run.sh`：
 
@@ -136,19 +145,19 @@ BI_ACTION_MODEL_PATH=<download_script打印的路径>/bidirectional_model
 AR_DISTILL_ACTION_MODEL_PATH=<download_script打印的路径>/ar_distilled_action_model
 ```
 
-### 配置选项
+#### 配置选项
 
 在 `run.sh` 中，您可以配置：
 
-| 参数 | 描述 |
-|------|------|
-| `PROMPT` | 场景的文本描述 |
-| `IMAGE_PATH` | 输入图像路径（I2V 必需） |
-| `NUM_FRAMES` | 要生成的帧数（默认：125） |
-| `N_INFERENCE_GPU` | 并行推理的 GPU 数量 |
-| `POSE_JSON_PATH` | 相机轨迹文件 |
+| 参数 | 描述                                                   |
+|------|------------------------------------------------------|
+| `PROMPT` | 场景的文本描述                                              |
+| `IMAGE_PATH` | 输入图像路径（I2V 必需）                                       |
+| `NUM_FRAMES` | 要生成的帧数（默认：125）。**重要说明：** 必须满足 `(num_frames-1) % 4 == 0`。对于双向模型须满足：`[(num_frames-1) // 4 + 1] % 16 == 0`。对于单向模型须满足：`[(num_frames-1) // 4 + 1] % 4 == 0` |
+| `N_INFERENCE_GPU` | 并行推理的 GPU 数量                                         |
+| `POSE` | 相机轨迹：姿态字符串（如 `w-31`代表生成`[1 + 31]`latents）或 JSON 文件路径 |
 
-### 模型选择
+#### 模型选择
 
 在 `run.sh` 中取消注释三个推理命令之一：
 
@@ -167,15 +176,49 @@ AR_DISTILL_ACTION_MODEL_PATH=<download_script打印的路径>/ar_distilled_actio
    --action_ckpt $AR_DISTILL_ACTION_MODEL_PATH --few_step true --num_inference_steps 4 --model_type 'ar'
    ```
 
-### 自定义相机轨迹
+#### 相机轨迹控制
 
-使用 `generate_custom_trajectory.py` 创建自定义相机路径：
+您有两种方式来控制相机轨迹：
+
+##### 方式 1：姿态字符串（推荐用于快速测试）
+
+在 `run.sh` 中设置 `POSE` 变量使用直观的姿态字符串：
+
+```bash
+POSE='w-31'
+```
+
+**支持的动作：**
+- **移动**: `w` (前进), `s` (后退), `a` (左移), `d` (右移)
+- **旋转**: `up` (俯仰向上), `down` (俯仰向下), `left` (偏航向左), `right` (偏航向右)
+- **格式**: `动作-时长`，时长代表动作对应的latents数量
+
+**示例：**
+```bash
+# 前进31个latents (默认), 总共生成[1 + 31]个latents
+POSE='w-31'
+
+# 前进3个latents, 向右旋转1个latent, 向右走4个latents, 总共生成[1 + 3 + 1 + 4]个latents
+POSE='w-3, right-1, d-4'
+
+# 复杂轨迹, 总共生成[1 + 2 + 1 + 2 + 4]个latents
+POSE='w-2, right-1, d-2, up-4'
+```
+
+##### 方式 2：自定义 JSON 文件
+
+对于更复杂的轨迹，使用 `generate_custom_trajectory.py`：
 
 ```bash
 python generate_custom_trajectory.py
 ```
 
-### 提示重写（可选）
+然后在 `run.sh` 中设置 JSON 文件路径：
+```bash
+POSE='./assets/pose/your_custom_trajectory.json'
+```
+
+#### 提示重写（可选）
 
 为获得更好的提示，您可以使用 vLLM 服务器启用提示重写：
 
@@ -185,13 +228,23 @@ export T2V_REWRITE_MODEL_NAME="<your_model_name>"
 REWRITE=true  # 在 run.sh 中
 ```
 
-### 运行推理
+#### 运行推理
 
 在编辑 `run.sh` 配置设置后，运行：
 
 ```bash
 bash run.sh
 ```
+
+---
+
+### WAN 管道推理
+
+关于 WAN 管道（支持分布式推理的轻量级替代方案）的详细信息，请参阅 [wan/README_zh.md](wan/README_zh.md)。
+
+---
+
+配置好任一管道后，您就可以开始生成视频了！
 
 
 ## 📊 评估

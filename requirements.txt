@@ -24,3 +24,4 @@ ninja
 pandas
 scipy
 protobuf
+moviepy==1.0.3

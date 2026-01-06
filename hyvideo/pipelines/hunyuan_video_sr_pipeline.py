@@ -30,26 +30,38 @@ from diffusers.utils import BaseOutput
 from hyvideo.commons.parallel_states import get_parallel_state
 from hyvideo.commons import auto_offload_model, get_rank
 from hyvideo.models.text_encoders import TextEncoder
-from hyvideo.models.transformers.worldplay_1_5_transformer import HunyuanVideo_1_5_DiffusionTransformer
+from hyvideo.models.transformers.worldplay_1_5_transformer import (
+    HunyuanVideo_1_5_DiffusionTransformer,
+)
 from hyvideo.models.transformers.modules.upsample import SRTo720pUpsampler
 from hyvideo.utils.data_utils import generate_crop_size_list
 
 from .worldplay_video_pipeline import HunyuanVideo_1_5_Pipeline
 from .pipeline_utils import rescale_noise_cfg, retrieve_timesteps
 
+
 def expand_dims(tensor: torch.Tensor, ndim: int):
     shape = tensor.shape + (1,) * (ndim - tensor.ndim)
     return tensor.reshape(shape)
+
 
 class BucketMap:
     """Maps low-resolution bucket sizes to corresponding high-resolution bucket sizes."""
 
     def __init__(self, lr_base_size, hr_base_size, lr_patch_size, hr_patch_size):
-        self.lr_buckets = generate_crop_size_list(base_size=lr_base_size, patch_size=lr_patch_size)
-        self.hr_buckets = generate_crop_size_list(base_size=hr_base_size, patch_size=hr_patch_size)
+        self.lr_buckets = generate_crop_size_list(
+            base_size=lr_base_size, patch_size=lr_patch_size
+        )
+        self.hr_buckets = generate_crop_size_list(
+            base_size=hr_base_size, patch_size=hr_patch_size
+        )
 
-        self.lr_aspect_ratios = np.array([float(w) / float(h) for w, h in self.lr_buckets])
-        self.hr_aspect_ratios = np.array([float(w) / float(h) for w, h in self.hr_buckets])
+        self.lr_aspect_ratios = np.array(
+            [float(w) / float(h) for w, h in self.lr_buckets]
+        )
+        self.hr_aspect_ratios = np.array(
+            [float(w) / float(h) for w, h in self.hr_buckets]
+        )
 
         self.hr_bucket_map = {}
         for i, (lr_w, lr_h) in enumerate(self.lr_buckets):
@@ -69,11 +81,13 @@ class BucketMap:
             raise ValueError(f"LR bucket {lr_bucket} not found in bucket map")
         return self.hr_bucket_map[lr_bucket]
 
+
 SizeMap = {
     "480p": 640,
     "720p": 960,
     "1080p": 1440,
 }
+
 
 @dataclass
 class HunyuanVideo_1_5_SR_PipelineOutput(BaseOutput):
@@ -89,8 +103,8 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
         transformer: HunyuanVideo_1_5_DiffusionTransformer,
         scheduler: KarrasDiffusionSchedulers,
         upsampler: SRTo720pUpsampler,
-        flow_shift: float=6.0,
-        guidance_scale: float=6.0,
+        flow_shift: float = 6.0,
+        guidance_scale: float = 6.0,
         num_inference_steps: int = 30,
         embedded_guidance_scale: Optional[float] = None,
         base_resolution: str = "480p",
@@ -136,7 +150,6 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
             num_inference_steps=num_inference_steps,
         )
 
-
     def add_noise_to_lq(self, lq_latents, strength=0.7):
         noise = torch.randn_like(lq_latents)
         timestep = torch.tensor([1000.0], device=self.execution_device) * strength
@@ -156,7 +169,7 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
         b, _, f, h, w = lq_latents.shape
         mask_ones = torch.ones(b, 1, f, h, w).to(lq_latents.device)
         cond_latents = torch.concat([lq_latents, mask_ones], dim=1)
-        
+
         return cond_latents
 
     @torch.no_grad()
@@ -224,9 +237,11 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
         if reference_image is not None:
             task_type = "i2v"
             if isinstance(reference_image, str):
-                reference_image = Image.open(reference_image).convert('RGB')
+                reference_image = Image.open(reference_image).convert("RGB")
             elif not isinstance(reference_image, Image.Image):
-                raise ValueError("reference_image must be a PIL Image or path to image file")
+                raise ValueError(
+                    "reference_image must be a PIL Image or path to image file"
+                )
             semantic_images_np = np.array(reference_image)
         else:
             task_type = "t2v"
@@ -242,11 +257,18 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
         sr_stride = 16
         base_size = SizeMap[self.config.base_resolution]
         sr_size = SizeMap[self.ideal_resolution]
-        bucket_map = BucketMap(lr_base_size=base_size, hr_base_size=sr_size, lr_patch_size=16, hr_patch_size=sr_stride)
+        bucket_map = BucketMap(
+            lr_base_size=base_size,
+            hr_base_size=sr_size,
+            lr_patch_size=16,
+            hr_patch_size=sr_stride,
+        )
         lr_video_height, lr_video_width = [x * 16 for x in lq_latents.shape[-2:]]
         width, height = bucket_map((lr_video_width, lr_video_height))
 
-        latent_target_length, latent_height, latent_width = self.get_latent_size(video_length, height, width)
+        latent_target_length, latent_height, latent_width = self.get_latent_size(
+            video_length, height, width
+        )
         n_tokens = latent_target_length * latent_height * latent_width
 
         self._guidance_scale = guidance_scale
@@ -263,7 +285,7 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
 
         if get_rank() == 0:
             print(
-                '\n'
+                "\n"
                 f"{'=' * 60}\n"
                 f"🎬  HunyuanVideo SR Generation Task\n"
                 f"{'-' * 60}\n"
@@ -281,7 +303,9 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
                 f"{'=' * 60}\n"
             )
 
-        with auto_offload_model(self.text_encoder, self.execution_device, enabled=self.enable_offloading):
+        with auto_offload_model(
+            self.text_encoder, self.execution_device, enabled=self.enable_offloading
+        ):
             (
                 prompt_embeds,
                 negative_prompt_embeds,
@@ -297,10 +321,11 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
                 data_type="video",
             )
 
-
         extra_kwargs = {}
         if self.config.glyph_byT5_v2:
-            with auto_offload_model(self.byt5_model, self.execution_device, enabled=self.enable_offloading):
+            with auto_offload_model(
+                self.byt5_model, self.execution_device, enabled=self.enable_offloading
+            ):
                 extra_kwargs = self._prepare_byt5_embeddings(prompt, device)
 
         if self.do_classifier_free_guidance:
@@ -330,23 +355,35 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
             generator,
         )
 
-        with auto_offload_model(self.vae, self.execution_device, enabled=self.enable_offloading):
-            image_cond = self.get_image_condition_latents(task_type, reference_image, height, width)
+        with auto_offload_model(
+            self.vae, self.execution_device, enabled=self.enable_offloading
+        ):
+            image_cond = self.get_image_condition_latents(
+                task_type, reference_image, height, width
+            )
 
         tgt_shape = latents.shape[-2:]  # (h w)
         bsz = lq_latents.shape[0]
         lq_latents = rearrange(lq_latents, "b c f h w -> (b f) c h w")
-        lq_latents = F.interpolate(lq_latents, size=tgt_shape, mode="bilinear", align_corners=False)
+        lq_latents = F.interpolate(
+            lq_latents, size=tgt_shape, mode="bilinear", align_corners=False
+        )
         lq_latents = rearrange(lq_latents, "(b f) c h w -> b c f h w", b=bsz)
-        with auto_offload_model(self.upsampler, self.execution_device, enabled=self.enable_offloading):
-            lq_latents = self.upsampler(lq_latents.to(dtype=torch.float32, device=self.execution_device))
+        with auto_offload_model(
+            self.upsampler, self.execution_device, enabled=self.enable_offloading
+        ):
+            lq_latents = self.upsampler(
+                lq_latents.to(dtype=torch.float32, device=self.execution_device)
+            )
         lq_latents = lq_latents.to(dtype=latents.dtype)
 
         noise_scale = 0.7
         lq_latents = self.add_noise_to_lq(lq_latents, noise_scale)
 
         multitask_mask = self.get_task_mask(task_type, latent_target_length)
-        cond_latents = self._prepare_cond_latents(task_type, image_cond, latents, multitask_mask)
+        cond_latents = self._prepare_cond_latents(
+            task_type, image_cond, latents, multitask_mask
+        )
         lq_cond_latents = self._prepare_lq_cond_latents(lq_latents)
 
         condition = torch.concat([cond_latents, lq_cond_latents], dim=1)
@@ -356,20 +393,27 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
         zero_lq_condition[:, c + 1 : 2 * c + 1] = torch.zeros_like(lq_latents)
         zero_lq_condition[:, 2 * c + 1] = 0
 
-        with auto_offload_model(self.vision_encoder, self.execution_device, enabled=self.enable_offloading):
+        with auto_offload_model(
+            self.vision_encoder, self.execution_device, enabled=self.enable_offloading
+        ):
             vision_states = self._prepare_vision_states(
                 semantic_images_np, target_resolution, latents, device
             )
 
         extra_step_kwargs = self.prepare_extra_func_kwargs(
-            self.scheduler.step, {"generator": generator, "eta": kwargs.get("eta", 0.0)},
+            self.scheduler.step,
+            {"generator": generator, "eta": kwargs.get("eta", 0.0)},
         )
 
         self._num_timesteps = len(timesteps)
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
 
-        with (self.progress_bar(total=num_inference_steps) as progress_bar,
-              auto_offload_model(self.transformer, self.execution_device, enabled=self.enable_offloading)):
+        with (
+            self.progress_bar(total=num_inference_steps) as progress_bar,
+            auto_offload_model(
+                self.transformer, self.execution_device, enabled=self.enable_offloading
+            ),
+        ):
             for i, t in enumerate(timesteps):
                 if t < 1000 * noise_scale:
                     condition = zero_lq_condition
@@ -380,9 +424,14 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
                 else:
                     latent_model_input = latents_concat
 
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
 
-                t_expand = t.repeat(latent_model_input.shape[0])
+                t_expand = t.repeat(
+                    latent_model_input.shape[0] * latent_model_input.shape[2]
+                )
+                t_txt_expand = t.repeat(latent_model_input.shape[0])
                 if not self.use_meanflow:
                     timesteps_r = None
                 else:
@@ -403,14 +452,21 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
                     else None
                 )
 
-                with torch.autocast(device_type="cuda", dtype=self.target_dtype, enabled=self.autocast_enabled):
+                with torch.autocast(
+                    device_type="cuda",
+                    dtype=self.target_dtype,
+                    enabled=self.autocast_enabled,
+                ):
                     output = self.transformer(
-                        latent_model_input,
-                        t_expand,
-                        t_expand,
-                        prompt_embeds,
-                        None,
-                        prompt_mask,
+                        bi_inference=True,
+                        ar_txt_inference=False,
+                        ar_vision_inference=False,
+                        hidden_states=latent_model_input,
+                        timestep=t_expand,
+                        timestep_txt=t_txt_expand,
+                        text_states=prompt_embeds,
+                        text_states_2=None,
+                        encoder_attention_mask=prompt_mask,
                         timestep_r=timesteps_r,
                         vision_states=vision_states,
                         mask_type=task_type,
@@ -422,7 +478,9 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
 
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                    noise_pred = noise_pred_uncond + self.guidance_scale * (
+                        noise_pred_text - noise_pred_uncond
+                    )
 
                 if self.guidance_rescale > 0.0 and self.do_classifier_free_guidance:
                     noise_pred = rescale_noise_cfg(
@@ -432,10 +490,14 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
                     )
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+                latents = self.scheduler.step(
+                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
+                )[0]
 
                 # Update progress bar
-                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                if i == len(timesteps) - 1 or (
+                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
+                ):
                     if progress_bar is not None:
                         progress_bar.update()
 
@@ -449,18 +511,32 @@ class HunyuanVideo_1_5_SR_Pipeline(HunyuanVideo_1_5_Pipeline):
                     f"Only support latents with shape (b, c, h, w) or (b, c, f, h, w), but got {latents.shape}."
                 )
 
-            if hasattr(self.vae.config, "shift_factor") and self.vae.config.shift_factor:
-                latents = latents / self.vae.config.scaling_factor + self.vae.config.shift_factor
+            if (
+                hasattr(self.vae.config, "shift_factor")
+                and self.vae.config.shift_factor
+            ):
+                latents = (
+                    latents / self.vae.config.scaling_factor
+                    + self.vae.config.shift_factor
+                )
             else:
                 latents = latents / self.vae.config.scaling_factor
 
-            if hasattr(self.vae, 'enable_tile_parallelism'):
+            if hasattr(self.vae, "enable_tile_parallelism"):
                 self.vae.enable_tile_parallelism()
-            with (torch.autocast(device_type="cuda", dtype=self.vae_dtype, enabled=self.vae_autocast_enabled),
-                  auto_offload_model(self.vae, self.execution_device, enabled=self.enable_offloading)):
-                self.vae.enable_tiling()
-                video_frames = self.vae.decode(latents, return_dict=False, generator=generator)[0]
-                self.vae.disable_tiling()
+            with (
+                torch.autocast(
+                    device_type="cuda",
+                    dtype=self.vae_dtype,
+                    enabled=self.vae_autocast_enabled,
+                ),
+                auto_offload_model(
+                    self.vae, self.execution_device, enabled=self.enable_offloading
+                ),
+            ):
+                video_frames = self.vae.decode(
+                    latents, return_dict=False, generator=generator
+                )[0]
 
             if video_frames is not None:
                 video_frames = (video_frames / 2 + 0.5).clamp(0, 1).cpu().float()
