@@ -86,47 +86,44 @@ class WanRunner:
         self.device = device
         torch.cuda.set_device(self.local_rank)
 
-        # Initialize distributed environment if world_size > 1
+        # Initialize distributed environment - needed even for single GPU
         # Setup distributed training for multi-process inference
-        if self.world_size > 1:
-            if not torch.distributed.is_initialized():
-                torch.distributed.init_process_group(backend="nccl")
+        if not torch.distributed.is_initialized():
+            torch.distributed.init_process_group(backend="nccl")
 
-            # Initialize model parallel with project's custom function
-            # Enable sequence parallelism across all GPUs
-            maybe_init_distributed_environment_and_model_parallel(
-                1,
-                sp_size=self.world_size,
-                distributed_init_method="env://",
-            )
+        # Initialize model parallel with project's custom function
+        # Enable sequence parallelism (sp_size=1 for single GPU)
+        maybe_init_distributed_environment_and_model_parallel(
+            1,
+            sp_size=self.world_size,
+            distributed_init_method="env://",
+        )
 
         # Initialize models
         self._init_models()
 
     def _init_models(self):
         # Load VAE for encoding/decoding video frames
+        # Use low_cpu_mem_usage to avoid loading entire model to RAM first
         self.vae = (
             MyVAE.from_pretrained(
-                self.model_id, subfolder="vae", torch_dtype=torch.bfloat16
+                self.model_id, subfolder="vae", torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=True, device_map=self.device
             )
             .eval()
             .requires_grad_(False)
         )
-        self.vae.to(self.device)
 
-        # Load main diffusion pipeline
+        # Load main diffusion pipeline - load directly to GPU
         self.pipe = WanPipeline.from_pretrained(
-            self.model_id, vae=self.vae, torch_dtype=torch.bfloat16
+            self.model_id, vae=self.vae, torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True
         )
+        # Move pipeline to GPU immediately after loading each component
+        self.pipe.to(self.device)
 
-        # Create distributed VAE wrapper for multi-GPU decoding
-        dist_vae = (
-            MyVAE.from_pretrained(
-                self.model_id, subfolder="vae", torch_dtype=torch.bfloat16
-            )
-            .eval()
-            .requires_grad_(False)
-        ).to(self.device)
+        # Reuse the same VAE for distributed wrapper instead of loading another copy
+        dist_vae = self.vae
         vae_chunk_dim = 4  # chunk width dim for vae input
         # Setup VAE for context-parallel decoding across GPUs
         dist_controller = DistController(
@@ -136,17 +133,22 @@ class WanRunner:
         self.pipe.dist_vae = dist_vae
 
         # Load autoregressive transformer with action conditioning
+        # Use low_cpu_mem_usage to load directly to GPU piece by piece
         transformer_ar_action = WanTransformer3DModel.from_pretrained(
             self.ar_model_path,
             use_safetensors=True,
             local_files_only=True,
+            low_cpu_mem_usage=True,
+            device_map=self.device,
+            torch_dtype=torch.bfloat16,
         )
         # Add action parameters to enable camera control
         transformer_ar_action.add_discrete_action_parameters()
 
         # Load trained checkpoint weights
+        # Load directly to GPU to avoid OOM on systems with limited RAM
         state_dict = torch.load(
-            self.ckpt_path, map_location=lambda storage, loc: storage
+            self.ckpt_path, map_location=self.device
         )
 
         state_dict = state_dict["generator"]
@@ -165,9 +167,10 @@ class WanRunner:
         }
 
         transformer_ar_action.load_state_dict(state_dict, strict=True)
-        self.pipe.transformer = transformer_ar_action.to(torch.bfloat16)
+        # Transformer already on GPU from device_map, just ensure dtype
+        self.pipe.transformer = transformer_ar_action.to(dtype=torch.bfloat16)
+        # Ensure entire pipeline is on GPU
         self.pipe.to(self.device)
-        self.pipe.transformer.to(torch.bfloat16)
 
     def predict(self, input_dict):
         prompt = input_dict.get("prompt", "")

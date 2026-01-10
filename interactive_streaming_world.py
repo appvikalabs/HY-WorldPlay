@@ -34,6 +34,8 @@ Notes
 """
 
 import os
+import sys
+import argparse
 import time
 import threading
 import queue
@@ -71,8 +73,8 @@ from hyvideo.utils.retrieval_context import generate_points_in_sphere, select_al
 # Config (tweakable)
 # -----------------------------
 
-VIDEO_WIDTH = 640
-VIDEO_HEIGHT = 368  # must be divisible by 16
+VIDEO_WIDTH = 848
+VIDEO_HEIGHT = 480  # must be divisible by 16 (matches 480p non-interactive)
 
 CHUNK_LATENT_FRAMES = 4  # 4 latents => 13 frames initially; +4 latents => +16 frames
 NUM_INFERENCE_STEPS = 4  # distilled
@@ -1081,15 +1083,83 @@ def _read_controls(keys) -> Tuple[str, Optional[str]]:
     return move, turn
 
 
-def main():
+def parse_args():
+    """Parse command-line arguments for model selection."""
+    parser = argparse.ArgumentParser(
+        description="vMonad - Interactive World Streaming Demo",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Model Types:
+  hunyuan-distilled  Fast 4-step distilled AR model (default, recommended)
+  hunyuan-ar         Full autoregressive model (slower, higher quality)
+  hunyuan-bi         Bidirectional model (highest quality, slowest)
+  wan                WAN pipeline (faster, lower memory) [coming soon]
+
+Examples:
+  python interactive_streaming_world.py
+  python interactive_streaming_world.py --model hunyuan-ar
+  python interactive_streaming_world.py --image my_scene.png --prompt "Exploring a castle"
+        """
+    )
+    parser.add_argument(
+        "--model", "-m",
+        type=str,
+        default="hunyuan-distilled",
+        choices=["hunyuan-distilled", "hunyuan-ar", "hunyuan-bi", "wan"],
+        help="Model type to use (default: hunyuan-distilled)"
+    )
+    parser.add_argument(
+        "--image", "-i",
+        type=str,
+        default="assets/img/1.png",
+        help="Initial reference image path"
+    )
+    parser.add_argument(
+        "--prompt", "-p",
+        type=str,
+        default="Photorealistic first-person view exploring a scene",
+        help="Initial prompt for generation"
+    )
+    return parser.parse_args()
+
+
+def get_model_paths(model_type: str) -> Tuple[str, str]:
+    """Get model_path and action_ckpt based on model type selection."""
     model_path = "/home/faraz/.cache/huggingface/hub/models--tencent--HunyuanVideo-1.5/snapshots/21d6fbc69d2eee5e6f932a8ab2068bb9f28c6fc7"
     worldplay_path = "/home/faraz/.cache/huggingface/hub/models--tencent--HY-WorldPlay/snapshots/95036f76df1e446fd046765ddadb868b84b05d8e"
-    action_ckpt = os.path.join(worldplay_path, "ar_distilled_action_model/model.safetensors")
-    image_path = "assets/img/1.png"
-    prompt = "Photorealistic first-person view exploring a scene"
+    
+    if model_type == "hunyuan-distilled":
+        action_ckpt = os.path.join(worldplay_path, "ar_distilled_action_model/model.safetensors")
+        print(f"[model] Using HunyuanVideo AR Distilled (fast 4-step)")
+    elif model_type == "hunyuan-ar":
+        action_ckpt = os.path.join(worldplay_path, "ar_model/diffusion_pytorch_model.safetensors")
+        print(f"[model] Using HunyuanVideo AR (full autoregressive)")
+    elif model_type == "hunyuan-bi":
+        action_ckpt = os.path.join(worldplay_path, "bidirectional_model/diffusion_pytorch_model.safetensors")
+        print(f"[model] Using HunyuanVideo Bidirectional (highest quality)")
+    elif model_type == "wan":
+        print("[model] WAN pipeline not yet integrated into interactive demo.")
+        print("[model] For WAN inference, use: python wan/generate.py --help")
+        print("[model] Falling back to HunyuanVideo AR Distilled...")
+        action_ckpt = os.path.join(worldplay_path, "ar_distilled_action_model/model.safetensors")
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+    
+    return model_path, action_ckpt
+
+
+def main():
+    args = parse_args()
+    
+    model_path, action_ckpt = get_model_paths(args.model)
+    image_path = args.image
+    prompt = args.prompt
 
     print("=" * 60)
     print("vMonad - Interactive World Streaming")
+    print(f"  Model: {args.model}")
+    print(f"  Image: {image_path}")
+    print(f"  Prompt: {prompt[:50]}..." if len(prompt) > 50 else f"  Prompt: {prompt}")
     print("=" * 60)
     print("Loading pipeline once... (this is the slow part)")
 

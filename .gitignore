@@ -165,6 +165,8 @@ logs/
 .cache/
 cache/
 ckpts/
-
+assets/
+.cursor/
+.vmonad/
 
 hyvideo/utils/rewrite/i2v_env.sh
