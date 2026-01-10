@@ -70,18 +70,20 @@ case "$MODEL" in
     ;;
 
   hunyuan-bi)
-    echo "Using HunyuanVideo bidirectional model"
+    # NOTE: Bidirectional model requires latents divisible by 16!
+    # w-15 = 16 latents, 61 frames
+    echo "Using HunyuanVideo bidirectional model (requires 16/32/48 latents)"
     PYTHONPATH=/wrk/tmt/HY-WorldPlay:$PYTHONPATH \
     torchrun --nproc_per_node=$N_INFERENCE_GPU hyvideo/generate.py \
       --prompt "$PROMPT" \
       --image_path "$IMAGE_PATH" \
       --resolution $RESOLUTION \
       --aspect_ratio $ASPECT_RATIO \
-      --video_length $NUM_FRAMES \
+      --video_length 61 \
       --seed $SEED \
       --rewrite $REWRITE \
       --sr $ENABLE_SR --save_pre_sr_video \
-      --pose "$POSE" \
+      --pose "w-15" \
       --output_path $OUTPUT_PATH \
       --model_path $MODEL_PATH \
       --action_ckpt $BI_ACTION_MODEL_PATH \
